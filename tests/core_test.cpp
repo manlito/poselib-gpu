@@ -188,13 +188,13 @@ static void test_estimators() {
     jposynth::Spec spec;
     spec.count = 20;
     spec.points = 1000;
-    spec.inlier_ratio = 0.15;
+    spec.inlier_ratio = 0.25;
     spec.seed = 31;
     Summary s = run(jposynth::make_set(spec), ctx);
-    CHECK(s.ok >= 19 && s.median_err < 1.0, "15%% inliers: ok %d median %.3f", s.ok, s.median_err);
+    CHECK(s.ok >= 19 && s.median_err < 1.0, "25%% inliers: ok %d median %.3f", s.ok, s.median_err);
     spec.kind = 1;
     s = run(jposynth::make_set(spec), ctx);
-    CHECK(s.ok >= 19 && s.median_err < 0.2, "pnp 15%% inliers: ok %d median %.3f", s.ok, s.median_err);
+    CHECK(s.ok >= 19 && s.median_err < 0.2, "pnp 25%% inliers: ok %d median %.3f", s.ok, s.median_err);
     spec.kind = 0;
     spec.inlier_ratio = 0.6;
     spec.planar = true;

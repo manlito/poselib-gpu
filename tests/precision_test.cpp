@@ -63,8 +63,8 @@ int main() {
             matched += best < 1e-3 ? 1 : 0;
           }
           int sol;
-          best_d = std::min(best_d, jpo::kd::jpo_rel_hypothesis(pd.data(), 0, n, 1, pi, it, ist, 3e38, &sol));
-          best_f = std::min<double>(best_f, jpo::kf::jpo_rel_hypothesis(pf.data(), 0, n, 1, pi, it, (float)ist, 3e38f, &sol));
+          best_d = std::min(best_d, jpo::kd::jpo_rel_hypothesis(pd.data(), 0, n, 1, pi, it, ist, 3e38, 0, 0, &sol));
+          best_f = std::min<double>(best_f, jpo::kf::jpo_rel_hypothesis(pf.data(), 0, n, 1, pi, it, (float)ist, 3e38f, 0, 0, &sol));
         } else {
           double xs[9], Xs[9], Pd[48];
           float ys[9], Ys[9], Pf[48];
@@ -84,8 +84,8 @@ int main() {
             p_matched += best < 1e-3 ? 1 : 0;
           }
           int sol;
-          best_d = std::min(best_d, jpo::kd::jpo_abs_hypothesis(pd.data(), 0, n, 1, pi, it, ist, 3e38, &sol));
-          best_f = std::min<double>(best_f, jpo::kf::jpo_abs_hypothesis(pf.data(), 0, n, 1, pi, it, (float)ist, 3e38f, &sol));
+          best_d = std::min(best_d, jpo::kd::jpo_abs_hypothesis(pd.data(), 0, n, 1, pi, it, ist, 3e38, 0, 0, &sol));
+          best_f = std::min<double>(best_f, jpo::kf::jpo_abs_hypothesis(pf.data(), 0, n, 1, pi, it, (float)ist, 3e38f, 0, 0, &sol));
         }
       }
       worst_rel_score = std::max(worst_rel_score, (best_f - best_d) / best_d);

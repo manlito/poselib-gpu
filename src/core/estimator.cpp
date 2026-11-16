@@ -23,6 +23,7 @@ struct State {
   uint32_t iters = 0;
   uint32_t dyn_max = 0;
   double best_minimal = kNoScore;  // best score a minimal sample reached: the bound of the next rounds
+  size_t minimal_inliers = 0;      // inliers of that sample's model: sets the early rejection test
   double best_score = kNoScore;
   size_t best_inliers = 0;
   Pose best;
@@ -37,6 +38,28 @@ uint32_t dynamic_max_iter(size_t inliers, size_t n, int sample, double log_missi
   const double it = std::ceil(log_missing / std::log(1.0 - p) * kDynTrialsMult);
   if (!(it < static_cast<double>(max_it))) return max_it;
   return std::max(min_it, static_cast<uint32_t>(it));
+}
+
+// The early rejection test of a round (kernels.inc, "Scores"): a hypothesis is scored on pre_k points
+// first and dropped if it has fewer than pre_min inliers there. With f the inlier ratio of the best
+// minimal model so far, a hypothesis as good as that one has about Binomial(pre_k, f) inliers in the
+// subset; pre_min is 3.1 standard deviations below the mean, which it passes with probability 0.999.
+//
+// Before any model exists, and for pairs that do not match at all, f is the smallest inlier ratio the
+// iteration budget could find: below f_floor the expected number of all-inlier samples in max_it draws
+// is under 0.05, so a model that sparse would not have been drawn anyway.
+//
+// Problems too small for the test to save work get none.
+void early_rejection(uint32_t n, size_t best_inliers, double f_floor, uint32_t* pre_k, uint32_t* pre_min) {
+  *pre_k = 0;
+  *pre_min = 0;
+  if (n < 256) return;
+  const uint32_t k = std::min<uint32_t>(256, std::max<uint32_t>(64, n / 8 / 16 * 16));
+  const double f = std::min(0.999, std::max(static_cast<double>(best_inliers) / n, f_floor));
+  const double m = std::floor(k * f - 3.1 * std::sqrt(k * f * (1.0 - f)));
+  if (m < 1.0) return;
+  *pre_k = k;
+  *pre_min = static_cast<uint32_t>(m);
 }
 
 // The points a refinement can use: those within sqrt(5) thresholds of the model (PoseLib's choice).
@@ -90,6 +113,7 @@ void consider_relative(State& st, const double* pts, const double* model) {
   quat_to_rotmat(q, cand.R);
   size_t ci = 0;
   const double cs = score_relpose(cand, p, st.n, st.sq_thr, &ci, nullptr);
+  st.minimal_inliers = ci;
   if (cs < st.best_score) {
     st.best_score = cs;
     st.best_inliers = ci;
@@ -123,6 +147,7 @@ void consider_absolute(State& st, const double* pts, const double* model) {
   quat_to_rotmat(q, cand.R);
   size_t inl = 0;
   double s = score_abspose(cand, p, st.n, st.sq_thr, &inl, nullptr);
+  st.minimal_inliers = inl;
   if (s < st.best_score) {
     st.best_score = s;
     st.best_inliers = inl;
@@ -150,6 +175,7 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
   const double log_missing = std::log(std::max(1.0 - opt.confidence, 1e-300));
   const uint32_t min_it = std::min(opt.min_iterations, opt.max_iterations);
   const uint32_t max_it = opt.max_iterations;
+  const double f_floor = std::pow(0.05 / std::max<double>(max_it, 1.0), 1.0 / sample);
   Backend* cpu = route.cpu;
   Backend* gpu = route.gpu;
   if (cpu) cpu->set_points(kind, pts.data(), n_points);
@@ -168,20 +194,32 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
     }
     // Where each active problem runs this round.
     size_t count_b[2] = {0, 0};
-    for (State& st : states) {
-      if (!st.active) continue;
-      if (!st.on_gpu && gpu && (!cpu || (st.iters >= route.cpu_iterations && st.n >= route.gpu_min_points)))
-        st.on_gpu = true;
-      count_b[st.on_gpu ? 1 : 0] += 1;
+    if (gpu && !cpu) {
+      for (State& st : states) st.on_gpu = true;
+    } else if (gpu) {
+      uint64_t total = 0;
+      for (const State& st : states) {
+        if (!st.active || st.on_gpu || st.iters < route.cpu_iterations) continue;
+        const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
+        if (need - st.iters >= route.gpu_min_remaining) total += need - st.iters;
+      }
+      if (total >= route.gpu_min_total && total > 0) {
+        for (State& st : states) {
+          if (!st.active || st.on_gpu || st.iters < route.cpu_iterations) continue;
+          const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
+          if (need - st.iters >= route.gpu_min_remaining) st.on_gpu = true;
+        }
+      }
     }
+    for (const State& st : states)
+      if (st.active) count_b[st.on_gpu ? 1 : 0] += 1;
     for (size_t i = 0; i < states.size(); ++i) {
       State& st = states[i];
       if (!st.active) continue;
       const int b = st.on_gpu ? 1 : 0;
       const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
       uint32_t count = std::min((b == 0 ? cpu : gpu)->round_size(count_b[b], st.iters), need - st.iters);
-      if (b == 0 && gpu && st.n >= route.gpu_min_points && st.iters < route.cpu_iterations)
-        count = std::min(count, route.cpu_iterations - st.iters);
+      if (b == 0 && gpu && st.iters < route.cpu_iterations) count = std::min(count, route.cpu_iterations - st.iters);
       RoundItem it;
       it.problem = static_cast<uint32_t>(i);
       it.first = st.first;
@@ -190,6 +228,7 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
       it.count = count;
       it.inv_sq_thr = 1.0 / st.sq_thr;
       it.bound = st.best_minimal;
+      early_rejection(st.n, st.minimal_inliers, f_floor, &it.pre_k, &it.pre_min);
       items[b].push_back(it);
       index[b].push_back(static_cast<uint32_t>(i));
     }

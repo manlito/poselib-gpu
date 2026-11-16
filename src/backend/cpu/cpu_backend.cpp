@@ -17,12 +17,12 @@ const uint32_t kMaxRound = 1024;
 struct Double {
   typedef double real;
   static real rel_hyp(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, real ist,
-                      real bound, int* sol) {
-    return kd::jpo_rel_hypothesis(p, off, n, seed, pr, it, ist, bound, sol);
+                      real bound, uint32_t pk, uint32_t pm, int* sol) {
+    return kd::jpo_rel_hypothesis(p, off, n, seed, pr, it, ist, bound, pk, pm, sol);
   }
   static real abs_hyp(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, real ist,
-                      real bound, int* sol) {
-    return kd::jpo_abs_hypothesis(p, off, n, seed, pr, it, ist, bound, sol);
+                      real bound, uint32_t pk, uint32_t pm, int* sol) {
+    return kd::jpo_abs_hypothesis(p, off, n, seed, pr, it, ist, bound, pk, pm, sol);
   }
   static int rel_model(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, int sol,
                        real* m) {
@@ -37,12 +37,12 @@ struct Double {
 struct Float {
   typedef float real;
   static real rel_hyp(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, real ist,
-                      real bound, int* sol) {
-    return kf::jpo_rel_hypothesis(p, off, n, seed, pr, it, ist, bound, sol);
+                      real bound, uint32_t pk, uint32_t pm, int* sol) {
+    return kf::jpo_rel_hypothesis(p, off, n, seed, pr, it, ist, bound, pk, pm, sol);
   }
   static real abs_hyp(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, real ist,
-                      real bound, int* sol) {
-    return kf::jpo_abs_hypothesis(p, off, n, seed, pr, it, ist, bound, sol);
+                      real bound, uint32_t pk, uint32_t pm, int* sol) {
+    return kf::jpo_abs_hypothesis(p, off, n, seed, pr, it, ist, bound, pk, pm, sol);
   }
   static int rel_model(const real* p, uint32_t off, uint32_t n, uint32_t seed, uint32_t pr, uint32_t it, int sol,
                        real* m) {
@@ -100,8 +100,8 @@ class CpuBackend final : public Backend {
       for (uint32_t h = 0; h < ch.count; ++h) {
         int sol = -1;
         const real b = ch.score < bound ? ch.score : bound;
-        const real sc = kind == Kind::Relative ? K::rel_hyp(pts, off, it.n, seed, it.problem, ch.iter0 + h, ist, b, &sol)
-                                               : K::abs_hyp(pts, off, it.n, seed, it.problem, ch.iter0 + h, ist, b, &sol);
+        const real sc = kind == Kind::Relative ? K::rel_hyp(pts, off, it.n, seed, it.problem, ch.iter0 + h, ist, b, it.pre_k, it.pre_min, &sol)
+                                               : K::abs_hyp(pts, off, it.n, seed, it.problem, ch.iter0 + h, ist, b, it.pre_k, it.pre_min, &sol);
         if (sol >= 0 && sc < ch.score) {
           ch.score = sc;
           ch.iter = ch.iter0 + h;

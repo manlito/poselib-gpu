@@ -10,14 +10,17 @@
 
 namespace jpo {
 
-// Where rounds run. With both backends set, a problem starts on the CPU and moves to the GPU once it
-// has drawn cpu_iterations hypotheses without meeting its stopping rule (the `auto` rule).
+// Where rounds run. With only one backend set, everything runs there. With both (the `auto` rule), a
+// problem starts on the CPU; once it has drawn cpu_iterations hypotheses it becomes a candidate for the
+// GPU if it still needs at least gpu_min_remaining more, and the candidates move together as soon as
+// they need gpu_min_total hypotheses between them. Easy problems therefore never leave the CPU, and a
+// GPU round starts with a bound and an early rejection test from the CPU phase.
 struct Route {
   Backend* cpu = nullptr;
   Backend* gpu = nullptr;
   uint32_t cpu_iterations = 0;
-  // Problems with fewer points than this never move to the GPU.
-  uint32_t gpu_min_points = 0;
+  uint32_t gpu_min_remaining = 0;
+  uint64_t gpu_min_total = 0;
 };
 
 struct BatchStats {

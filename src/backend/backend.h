@@ -25,6 +25,8 @@ struct RoundItem {
   uint32_t count;     // hypotheses
   double inv_sq_thr;  // 1 / squared threshold, on the normalized image plane
   double bound;       // scores above this cannot win: the scoring loop may stop there
+  uint32_t pre_k;     // early rejection: a hypothesis with fewer than pre_min inliers among its first
+  uint32_t pre_min;   // pre_k points is dropped (pre_min = 0: no test; pre_k a multiple of 16)
 };
 
 struct RoundResult {

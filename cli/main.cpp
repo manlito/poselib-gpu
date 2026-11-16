@@ -124,6 +124,8 @@ int cmd_run(const Args& a) {
     return 1;
   }
   if (a.has("--cpu-iter")) jpo::ctx_route(ctx).cpu_iterations = static_cast<uint32_t>(a.num("--cpu-iter", 0));
+  if (a.has("--gpu-min-remaining")) jpo::ctx_route(ctx).gpu_min_remaining = static_cast<uint32_t>(a.num("--gpu-min-remaining", 0));
+  if (a.has("--gpu-min-total")) jpo::ctx_route(ctx).gpu_min_total = static_cast<uint64_t>(a.num("--gpu-min-total", 0));
   jpo_ransac_options opt;
   jpo_ransac_options_init(&opt);
   opt.max_error_px = a.num("--max-error", set.kind == 0 ? 1.0 : 4.0);

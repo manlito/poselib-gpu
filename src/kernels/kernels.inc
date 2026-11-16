@@ -26,7 +26,9 @@
 #define JPO_REL_STRIDE 4  // x1 y1 x2 y2 (normalized image coordinates)
 #define JPO_ABS_STRIDE 5  // x y (normalized image coordinates), X Y Z
 #define JPO_BIG JPO_C(3.0e38)
-#define JPO_POLISH_STEPS 2
+#ifndef JPO_POLISH_STEPS
+#define JPO_POLISH_STEPS 2  // Gauss-Newton steps on each five-point solution
+#endif
 
 // ---------------------------------------------------------------------------------------------------
 // Sampler. Counter based: the sample of (seed, problem, iteration) is the same on every backend.
@@ -339,10 +341,6 @@ JPO_FN int jpo_relpose_5pt(JPO_P const real* b1, JPO_P const real* b2, JPO_P rea
     }
   }
 
-  // The constraints as they are, for the polish of each solution below.
-  real C0[200];
-  for (int i = 0; i < 200; ++i) C0[i] = C[i];
-
   // Gauss-Jordan on the first ten columns, partial pivoting.
   for (int col = 0; col < 10; ++col) {
     int piv = col;
@@ -440,8 +438,9 @@ JPO_FN int jpo_relpose_5pt(JPO_P const real* b1, JPO_P const real* b2, JPO_P rea
     if (!(JPO_ABS(det) > JPO_C(0.0))) continue;
     real x = (-bb[i0] * by[i1] + bb[i1] * by[i0]) / det;
     real y = (-bx[i0] * bb[i1] + bx[i1] * bb[i0]) / det;
-    // Polish (x, y, z) on the ten constraints before elimination: Gauss-Newton steps. The elimination,
-    // the determinant and its roots lose digits, most of all in float; this gets them back.
+    // Polish (x, y, z) on the ten eliminated constraints (row r: monomial r plus ten coefficients of
+    // the monomials 10..19): Gauss-Newton steps. The determinant and its roots lose digits, most of all
+    // in float; this gets them back.
     for (int it = 0; it < JPO_POLISH_STEPS; ++it) {
       real mon[20], gx[20], gy[20], gz[20];
       for (int i = 0; i < 20; ++i) {
@@ -503,9 +502,9 @@ JPO_FN int jpo_relpose_5pt(JPO_P const real* b1, JPO_P const real* b2, JPO_P rea
       real a00 = JPO_C(0.0), a01 = JPO_C(0.0), a02 = JPO_C(0.0), a11 = JPO_C(0.0), a12 = JPO_C(0.0), a22 = JPO_C(0.0);
       real g0 = JPO_C(0.0), g1 = JPO_C(0.0), g2 = JPO_C(0.0);
       for (int r = 0; r < 10; ++r) {
-        real f = JPO_C(0.0), fx = JPO_C(0.0), fy = JPO_C(0.0), fz = JPO_C(0.0);
-        for (int m = 0; m < 20; ++m) {
-          real cm = C0[20 * r + m];
+        real f = mon[r], fx = gx[r], fy = gy[r], fz = gz[r];
+        for (int m = 10; m < 20; ++m) {
+          real cm = C[20 * r + m];
           f += cm * mon[m];
           fx += cm * gx[m];
           fy += cm * gy[m];
@@ -840,6 +839,12 @@ JPO_FN int jpo_p3p(JPO_P const real* xin, JPO_P const real* Xin, JPO_P real* P) 
 // Scores. Truncated squared error (MSAC) in units of the squared threshold: each point adds
 // min(r2 / thr2, 1). A score that passes `bound` cannot win, so the loop stops there; the value
 // returned is then only known to be above the bound.
+//
+// Early rejection: points are visited from `start` (a per-hypothesis offset, so that the first pre_k
+// points are a different subset for every hypothesis). A hypothesis with fewer than pre_min inliers
+// among its first pre_k points is dropped (JPO_BIG). The host chooses pre_min so that a hypothesis as
+// good as the best so far passes with probability 0.999 (core/estimator.cpp); pre_min = 0 turns the
+// test off. pre_k is a multiple of 16.
 
 // The four motions of an essential matrix (PoseLib motion_from_essential): P holds 4 poses of 12
 // values, R row major then t. No singular value decomposition: cross products of the columns of E.
@@ -926,8 +931,10 @@ JPO_FN int jpo_cheirality(JPO_P const real* P, real b10, real b11, real b12, rea
 
 // Sampson error of the pairs pts[off + 4 i ..] against the relative pose P (12); a pair within the
 // threshold that fails the cheirality test counts as an outlier (as PoseLib).
-JPO_FN real jpo_score_rel(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32 n, real inv_sq_thr, real bound) {
+JPO_FN real jpo_score_rel(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32 n, real inv_sq_thr, real bound,
+                          jpo_u32 start, jpo_u32 pre_k, jpo_u32 pre_min) {
   real score = JPO_C(0.0);
+  jpo_u32 inl = 0U;
   // E = [t]x R
   real e0 = -P[11] * P[3] + P[10] * P[6];
   real e1 = -P[11] * P[4] + P[10] * P[7];
@@ -939,7 +946,9 @@ JPO_FN real jpo_score_rel(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32
   real e7 = -P[10] * P[1] + P[9] * P[4];
   real e8 = -P[10] * P[2] + P[9] * P[5];
   for (jpo_u32 i = 0; i < n; ++i) {
-    jpo_u32 o = off + JPO_REL_STRIDE * i;
+    jpo_u32 pi = start + i;
+    if (pi >= n) pi -= n;
+    jpo_u32 o = off + JPO_REL_STRIDE * pi;
     real x1 = pts[o], y1 = pts[o + 1], x2 = pts[o + 2], y2 = pts[o + 3];
     real a0 = e0 * x1 + e1 * y1 + e2;
     real a1 = e3 * x1 + e4 * y1 + e5;
@@ -952,21 +961,31 @@ JPO_FN real jpo_score_rel(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32
     if (r2 < JPO_C(1.0)) {
       real i1 = JPO_C(1.0) / JPO_SQRT(x1 * x1 + y1 * y1 + JPO_C(1.0));
       real i2 = JPO_C(1.0) / JPO_SQRT(x2 * x2 + y2 * y2 + JPO_C(1.0));
-      if (jpo_cheirality(P, x1 * i1, y1 * i1, i1, x2 * i2, y2 * i2, i2) != 0) add = r2;
+      if (jpo_cheirality(P, x1 * i1, y1 * i1, i1, x2 * i2, y2 * i2, i2) != 0) {
+        add = r2;
+        inl += 1U;
+      }
     }
     score += add;
-    if ((i & 15U) == 15U && score > bound) break;
+    if ((i & 15U) == 15U) {
+      if (score > bound) break;
+      if (i + 1U == pre_k && inl < pre_min) return JPO_BIG;
+    }
   }
   return score;
 }
 
 // Reprojection error on the normalized image plane of pts[off + 5 i ..] against the pose P (12).
-JPO_FN real jpo_score_abs(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32 n, real inv_sq_thr, real bound) {
+JPO_FN real jpo_score_abs(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32 n, real inv_sq_thr, real bound,
+                          jpo_u32 start, jpo_u32 pre_k, jpo_u32 pre_min) {
   real score = JPO_C(0.0);
+  jpo_u32 inl = 0U;
   real r0 = P[0], r1 = P[1], r2 = P[2], r3 = P[3], r4 = P[4], r5 = P[5], r6 = P[6], r7 = P[7], r8 = P[8];
   real t0 = P[9], t1 = P[10], t2 = P[11];
   for (jpo_u32 i = 0; i < n; ++i) {
-    jpo_u32 o = off + JPO_ABS_STRIDE * i;
+    jpo_u32 pi = start + i;
+    if (pi >= n) pi -= n;
+    jpo_u32 o = off + JPO_ABS_STRIDE * pi;
     real X = pts[o + 2], Y = pts[o + 3], Z = pts[o + 4];
     real z0 = r0 * X + r1 * Y + r2 * Z + t0;
     real z1 = r3 * X + r4 * Y + r5 * Z + t1;
@@ -977,10 +996,16 @@ JPO_FN real jpo_score_abs(JPO_P const real* P, JPO_PTS pts, jpo_u32 off, jpo_u32
       real d0 = z0 * inv - pts[o];
       real d1 = z1 * inv - pts[o + 1];
       real v = (d0 * d0 + d1 * d1) * inv_sq_thr;
-      if (v < JPO_C(1.0)) e2 = v;
+      if (v < JPO_C(1.0)) {
+        e2 = v;
+        inl += 1U;
+      }
     }
     score += e2;
-    if ((i & 15U) == 15U && score > bound) break;
+    if ((i & 15U) == 15U) {
+      if (score > bound) break;
+      if (i + 1U == pre_k && inl < pre_min) return JPO_BIG;
+    }
   }
   return score;
 }
@@ -1010,7 +1035,8 @@ JPO_FN void jpo_rel_sample(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed, jp
 // The motions of sample solution e that put all five sample points in front of both cameras, scored;
 // the solution index is 4 e + k.
 JPO_FN real jpo_rel_hypothesis(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed, jpo_u32 problem, jpo_u32 iter,
-                               real inv_sq_thr, real bound, JPO_P int* best_sol) {
+                               real inv_sq_thr, real bound, jpo_u32 pre_k, jpo_u32 pre_min, JPO_P int* best_sol) {
+  jpo_u32 start = jpo_hash(jpo_sample_base(seed, problem, iter) ^ 0x5bd1e995U) % n;
   real b1[15], b2[15];
   real E[9 * JPO_MAX_E];
   jpo_rel_sample(pts, off, n, seed, problem, iter, b1, b2);
@@ -1031,7 +1057,7 @@ JPO_FN real jpo_rel_hypothesis(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed
           front = 0;
       }
       if (front == 0) continue;
-      real sc = jpo_score_rel(Ps, pts, off, n, inv_sq_thr, best < bound ? best : bound);
+      real sc = jpo_score_rel(Ps, pts, off, n, inv_sq_thr, best < bound ? best : bound, start, pre_k, pre_min);
       if (sc < best) {
         best = sc;
         best_sol[0] = 4 * s + k;
@@ -1077,7 +1103,8 @@ JPO_FN void jpo_abs_sample(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed, jp
 }
 
 JPO_FN real jpo_abs_hypothesis(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed, jpo_u32 problem, jpo_u32 iter,
-                               real inv_sq_thr, real bound, JPO_P int* best_sol) {
+                               real inv_sq_thr, real bound, jpo_u32 pre_k, jpo_u32 pre_min, JPO_P int* best_sol) {
+  jpo_u32 start = jpo_hash(jpo_sample_base(seed, problem, iter) ^ 0x5bd1e995U) % n;
   real xs[9], Xs[9];
   real P[12 * JPO_MAX_P];
   jpo_abs_sample(pts, off, n, seed, problem, iter, xs, Xs);
@@ -1087,7 +1114,7 @@ JPO_FN real jpo_abs_hypothesis(JPO_PTS pts, jpo_u32 off, jpo_u32 n, jpo_u32 seed
   for (int s = 0; s < ns; ++s) {
     real Ps[12];
     for (int i = 0; i < 12; ++i) Ps[i] = P[12 * s + i];
-    real sc = jpo_score_abs(Ps, pts, off, n, inv_sq_thr, best < bound ? best : bound);
+    real sc = jpo_score_abs(Ps, pts, off, n, inv_sq_thr, best < bound ? best : bound, start, pre_k, pre_min);
     if (sc < best) {
       best = sc;
       best_sol[0] = s;

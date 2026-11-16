@@ -73,8 +73,12 @@ int cmd_bench(int argc, char** argv) {
       std::fprintf(stderr, "bench: backend %s unavailable (%s)\n", b.c_str(), jpo_last_error());
       continue;
     }
-    if (opt.count("--cpu-iter") && cfg.backend == JPO_BACKEND_AUTO)
-      jpo::ctx_route(ctx).cpu_iterations = static_cast<uint32_t>(num("--cpu-iter", 0));
+    if (cfg.backend == JPO_BACKEND_AUTO) {  // try another rule than the built-in one
+      jpo::Route& route = jpo::ctx_route(ctx);
+      if (opt.count("--cpu-iter")) route.cpu_iterations = static_cast<uint32_t>(num("--cpu-iter", 0));
+      if (opt.count("--gpu-min-remaining")) route.gpu_min_remaining = static_cast<uint32_t>(num("--gpu-min-remaining", 0));
+      if (opt.count("--gpu-min-total")) route.gpu_min_total = static_cast<uint64_t>(num("--gpu-min-total", 0));
+    }
     ctxs.push_back(ctx);
     names.push_back(b);
   }

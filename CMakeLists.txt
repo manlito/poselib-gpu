@@ -94,9 +94,9 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(jpo PRIVATE Threads::Threads)
 endif()
 if(NOT MSVC)
-  # -ffp-contract=off: results do not depend on whether the machine has fused multiply-add, so the
-  # float CPU build is a fixed reference for the GPU kernels.
-  target_compile_options(jpo PRIVATE $<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra;-ffp-contract=off>)
+  # Fused multiply-add is left to the compiler (measured 15-25 % faster on Apple silicon). Backends
+  # therefore agree on the best hypothesis except at near ties, not bit for bit; tests compare that way.
+  target_compile_options(jpo PRIVATE $<$<COMPILE_LANGUAGE:CXX,OBJCXX>:-Wall;-Wextra>)
 endif()
 
 # One kernel source for CPU, CUDA and Metal: src/kernels/kernels.inc.
@@ -108,8 +108,6 @@ if(JPO_HAVE_CUDA)
   set_property(SOURCE src/backend/cuda/cuda_backend.cu APPEND PROPERTY OBJECT_DEPENDS "${jpo_kernels}")
   target_compile_definitions(jpo PRIVATE JPO_HAVE_CUDA)
   set_target_properties(jpo PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
-  # --fmad=false: no fused multiply-add in kernels, so they compute what the float CPU build computes.
-  target_compile_options(jpo PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fmad=false>)
 endif()
 
 if(JPO_HAVE_METAL)
@@ -232,6 +230,10 @@ if(JPO_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(parity_test PRIVATE jpo poselib_ref)
     add_test(NAME poselib_parity COMMAND parity_test)
   endif()
+  # The incremental reconstruction test (needs just-ba; see tests/incremental/CMakeLists.txt).
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/incremental/CMakeLists.txt")
+    add_subdirectory(tests/incremental)
+  endif()
   set(gpu_backends ${jpo_backends})
   list(REMOVE_ITEM gpu_backends cpu)
   if(gpu_backends)
@@ -239,6 +241,11 @@ if(JPO_BUILD_TESTS AND NOT EMSCRIPTEN)
     add_executable(backend_test tests/backend_test.cpp)
     target_include_directories(backend_test PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(backend_test PRIVATE jpo)
+    foreach(b CUDA METAL WEBGPU)
+      if(JPO_HAVE_${b})
+        target_compile_definitions(backend_test PRIVATE JPO_HAVE_${b})  # the internal factories (backend.h)
+      endif()
+    endforeach()
     foreach(backend IN LISTS gpu_backends)
       add_test(NAME ${backend}_vs_cpu COMMAND backend_test ${backend})
     endforeach()
