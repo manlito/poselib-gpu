@@ -33,8 +33,10 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
       // RTX 2070 Max-Q against a 6-core i7-9750H: the GPU already wins on one hard problem, so the
       // candidates move as soon as they need a few thousand hypotheses between them. 512 remaining, not
       // 1024: batches of resections at 30 % inliers stop near 1000 iterations and run 1.5 to 3 times
-      // faster once they move; on the bench grid nothing else routes differently.
-      route->cpu_iterations = 256;
+      // faster once they move; on the bench grid nothing else routes differently. A CPU phase of 128,
+      // not 256: hard batches move earlier (5 to 33 % faster); with fewer problems than threads the phase
+      // still lasts the CPU's first round, and easy problems are not cut (core/estimator.cpp).
+      route->cpu_iterations = 128;
       route->gpu_min_remaining = 512;
       route->gpu_min_total = 5000;
       // A budget that fits in one GPU round: one dispatch ties the CPU on K = 16 to 32 candidates with

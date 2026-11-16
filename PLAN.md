@@ -298,8 +298,9 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     `auto` rule per backend below. Device inputs were not added (no copy showed in a profile). Known gap in
     `auto`: resections of 200 points at 30 % inliers stop near 1000 iterations, under the rule's threshold, so `auto`
     stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches. On CUDA
-    the threshold is now 512 and those batches run 1.5 to 3 times faster, still 2.1 to 2.4 times behind
-    CUDA alone on 200 points; Metal keeps the gap (lowering its threshold slowed other cells).
+    the threshold is now 512 with a 128-iteration CPU phase: those batches run 1.8 to 4.9 times faster,
+    1.5 to 1.6 times behind CUDA alone on 200 points and ahead of it on 2000; Metal keeps the gap (lowering its
+    threshold slowed other cells).
 
 - [x] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
@@ -341,7 +342,7 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 | Backend | Measured on | cpu_iterations | gpu_min_remaining | gpu_min_total |
 |---|---|---|---|---|
 | Metal | M5 Pro, 18 threads | 256 | 1024 | 50,000 |
-| CUDA | RTX 2070 Max-Q, i7-9750H | 256 | 512 | 5,000 |
+| CUDA | RTX 2070 Max-Q, i7-9750H | 128 | 512 | 5,000 |
 | WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
 | WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
 
@@ -400,6 +401,10 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 
 ### What changed while building
 
+- **The CPU phase of `auto` never ends inside the CPU's first round, and only cuts problems that could
+  move.** Cutting the widened first round of a small batch left threads idle and cost easy problems a
+  second round; a problem that cannot reach `gpu_min_remaining` keeps its whole round (routing unchanged).
+  This made a 128-iteration phase pay on CUDA (RESULTS.md, "CPU phase of 128 on CUDA").
 - **Iterations, not rounds, in the options and results.** They mean what they mean in PoseLib on every backend.
 - **Hypotheses are scored as poses with a cheirality test**, not as essential matrices (PoseLib's
   behaviour). Scoring E alone lost planar scenes.
@@ -426,9 +431,9 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
   with failing candidates (the 64-iteration CPU phase), and 0.1 to 0.9 ms behind CUDA alone (the
   16-iteration phase); on CUDA, rounds with no failing candidate at K = 16 to 32 are 0.3 to 0.6 ms behind
   the CPU.
-- On CUDA, a 128-iteration CPU phase would be 10 to 15 % faster on hard batches and closer to CUDA alone on
-  200-point resections at 30 %, but costs single easy pairs an extra CPU round (0.60 → 0.90 ms). A CPU phase
-  that does not split the CPU rounds of problems that finish in it might get both; not tried.
+- On CUDA, single or paired easy problems of 2000 points are up to 0.3 ms slower than before the CPU phase
+  lasted the CPU's first round (pnp 1 x 2000 at 70 %: 1.37 → 1.69 ms): that round is 384 hypotheses where
+  an easy problem needs about 256.
 
 ## Development machines
 

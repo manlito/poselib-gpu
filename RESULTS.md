@@ -147,7 +147,7 @@ Reproduce: `python3 tools/bench.py --backends cpu,metal,auto`, `python3 tools/ac
 | pnp | 3000 | 2000 | 0 | 69258.42 | 76738.37 | 7065.70 | 9167.19 |
 
 The `auto` column above is the rule as it was measured for M5 (1024 remaining); the current CUDA rule moves
-problems with 512 or more hypotheses left (next section).
+problems with 512 or more hypotheses left after a 128-iteration CPU phase (next sections).
 
 ### `gpu_min_remaining` 512 on CUDA (the known gap)
 
@@ -178,13 +178,64 @@ window; cpu and cuda from the full grid run before it:
   cells that route identically under all three settings, and some never touch the GPU (300 easy pairs:
   83 against 94 to 96 ms), came out that much faster on it. Small differences between the columns
   elsewhere in that run are this, not the rule.
-- Tried and not taken: a 128-iteration CPU phase with 512 remaining (last column). It gains more on these
-  cells and about 10 to 15 % on hard batches (3000 x 2000 at 10 %: 4171 against 4852 ms), but it re-routes
-  every hard problem and costs single easy pairs an extra CPU round: 0.60 → 0.90 ms on 200 points, 2.54 →
-  3.23 ms on 2000, as on Metal ("`auto` with a one-round budget"). 256 remaining routes as 512 does on
-  this grid; 512 is kept as the smaller change.
+- A 128-iteration CPU phase with 512 remaining (last column) gains more on these cells and about 10 to
+  15 % on hard batches (3000 x 2000 at 10 %: 4171 against 4852 ms), but as it was it cost single easy pairs
+  an extra CPU round: 0.60 → 0.90 ms on 200 points, 2.54 → 3.23 ms on 2000, as on Metal ("`auto` with a
+  one-round budget"). It is the current rule since the change in the next section. 256 remaining routes as
+  512 does on this grid; 512 is kept as the smaller change.
 - Calls whose budget fits in one GPU round follow CUDA's one-round numbers (below) and are not affected;
   `jpo candidates` with the new rule matched the earlier runs within the laptop's drift.
+
+### CPU phase of 128 on CUDA, and where the phase ends
+
+The 128-iteration phase above lost on single easy pairs because the CPU phase cut the CPU's first round.
+With fewer problems than threads, the CPU backend widens a round so every thread has a chunk (one problem
+on 12 threads: 384 hypotheses). Ending the phase at 128 inside that round left 8 threads idle for about the
+same wall time, and an easy pair that needed a few more iterations paid for a second round. Two changes to
+where the phase ends (`src/core/estimator.cpp`, every backend):
+
+- The phase lasts at least the CPU's first round (`max(cpu_iterations, round_size(n_start, 0))`). This
+  applies to the general rule only; the one-round numbers were measured with the cut and keep it.
+- A round is cut at the phase end only for a problem that could move to the GPU there. A problem's
+  remaining need never grows, so one with fewer than `gpu_min_remaining` left at the phase end can never
+  move; it keeps its whole round. This cannot change routing. Under the rule of the previous section it
+  gave byte-identical results on the grid (batches 1 to 300).
+
+CUDA then moves to a 128-iteration phase. Interleaved, best of two runs each, `jpo bench --backends auto
+--batches 1,2,4,8,32,300`: A the rule of the previous section (phase 256), C phase 128 with only the
+first change, D phase 128 with both (the current rule); selected cells, ms:
+
+| kind | batch | points | inliers | A, phase 256 | C | D, current |
+|---|---|---|---|---|---|---|
+| relpose | 1 | 200 | 0.7 | 0.65 | 0.64 | 0.62 |
+| relpose | 4 | 2000 | 0.7 | 5.42 | 6.95 | 5.43 |
+| relpose | 8 | 2000 | 0.7 | 7.27 | 8.30 | 7.49 |
+| relpose | 300 | 200 | 0.1 | 457.15 | 427.24 | 431.65 |
+| pnp | 1 | 2000 | 0.7 | 1.37 | 1.56 | 1.69 |
+| pnp | 1 | 2000 | 0.1 | 6.25 | 5.11 | 5.16 |
+| pnp | 8 | 2000 | 0.1 | 17.02 | 14.55 | 14.91 |
+| pnp | 32 | 200 | 0.3 | 3.46 | 2.56 | 2.59 |
+| pnp | 300 | 200 | 0.3 | 28.93 | 19.25 | 19.57 |
+| pnp | 300 | 2000 | 0.1 | 426.31 | 356.61 | 361.90 |
+
+- Over all 96 cells D is 3.6 % faster than A (geometric mean), with A first in each pair and so warmer
+  (see above). Hard resection batches run 8 to 33 % faster and hard pair batches 3 to 6 %; solved counts
+  are the same in every cell. Against C, GPU routing and solved counts are identical in every cell; D only
+  saves CPU rounds, which is what removes C's losses on easy batches of 4 and 8 (5.43 against 6.95 ms).
+- What D still loses: up to 0.3 ms on single or paired easy problems of 2000 points (pnp 1 x 2000 at
+  70 %: 1.37 → 1.69 ms; 1.11 times already with the first change alone at phase 256). A single problem's
+  first round is now 384 hypotheses where an easy one needs about 256; the same wider round makes a single
+  hard resection faster (6.25 → 5.16 ms).
+- With 3000 problems the first change does nothing (their first round is 32) and the second only saves
+  rounds of easy problems, so the earlier phase-128 run applies: 3000 x 200 resections at 30 % 214 ms
+  against 321 (CUDA alone 136), 3000 x 2000 at 10 % 4171 against 4852.
+- `jpo candidates`: with the option on, unchanged within 3 %; with it off, 5 to 12 % faster (failing
+  candidates move after 128 iterations).
+- Metal keeps its numbers. There the first change touches only batches of 1 and 2 (an 18-thread first round
+  is 576 and 288 hypotheses), which never reach the GPU under Metal's rule; easy problems draw 576
+  hypotheses instead of 256. Old against new binary, best of two runs of five, batches 1 to 3 (M5 Pro):
+  geometric mean 0.996, every cell within 0.1 ms but one (a single hard resection of 2000 points, 2.18
+  against 3.49 ms with identical hypothesis counts, which is noise).
 
 ## WebGPU
 
