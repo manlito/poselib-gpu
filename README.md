@@ -58,7 +58,9 @@ jpo_absolute_pose(ctx, &candidates, &opt, results, inliers);
 A problem with at least that inlier ratio has drawn an all-inlier sample with the requested confidence by
 then. On the M5 Pro a round of 8 to 32 candidates with a quarter to three quarters failing runs 3.7 to 10
 times faster than without the option, with every good candidate still solved, and `auto` sends the
-failing candidates of rounds of 16 or more to Metal when that is faster (RESULTS.md). The option also
+failing candidates of rounds of 16 or more to Metal when that is faster. On the NVIDIA laptop (6 cores,
+RTX 2070 Max-Q) the option gains 7 to 14 times on the CPU, and `auto` moves the failing candidates of
+every round to CUDA, 1.35 to 4.2 times faster than staying on the CPU (RESULTS.md). The option also
 applies to `jpo_relative_pose`, but with five-point samples the cap is near 10,000 anyway, so leave it at 0
 for pairs. CLI: `--min-inlier-ratio r` for `jpo run` and `jpo bench`; JavaScript: `minInlierRatio`.
 

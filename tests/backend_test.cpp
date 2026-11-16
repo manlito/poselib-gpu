@@ -274,11 +274,20 @@ int main(int argc, char** argv) {
     }
   }
 
-  // ---- 4. auto with a one-round budget (Metal's rule, PLAN.md "The auto rule") ----
-  // min_inlier_ratio 0.25 on resections caps them at 585 iterations, one GPU round. Under auto, a round
-  // of 32 candidates with 24 failing moves the failing ones to the GPU after 64 CPU iterations; 8
-  // candidates, or 32 good ones, never could need 5,000 hypotheses there and stay on the CPU.
-  if (id == JPO_BACKEND_METAL) {
+  // ---- 4. auto with a one-round budget (each backend's rule, PLAN.md "The auto rule") ----
+  // min_inlier_ratio 0.25 on resections caps them at 585 iterations, one GPU round. Metal: a round of 32
+  // candidates with 24 failing moves the failing ones to the GPU after 64 CPU iterations; 8 candidates,
+  // or 32 good ones, never could need 5,000 hypotheses there and stay on the CPU. CUDA: 1,000 hypotheses
+  // after 16 CPU iterations, so 6 failing candidates move too and one alone stays; a good candidate that
+  // has not found its model by then may move with them (gpu = -1: either way, only solved and capped count).
+  struct Case {
+    uint32_t good, failing;
+    int gpu;  // 1 moves, 0 stays, -1 either
+  };
+  std::vector<Case> one_round_cases;
+  if (id == JPO_BACKEND_METAL) one_round_cases = {{8, 24, 1}, {2, 6, 0}, {32, 0, 0}};
+  if (id == JPO_BACKEND_CUDA) one_round_cases = {{8, 24, 1}, {2, 6, 1}, {0, 1, 0}, {32, 0, -1}};
+  if (!one_round_cases.empty()) {
     jpo_config cfg;
     jpo_config_init(&cfg);
     jpo_ctx* ctx = jpo_create(&cfg);
@@ -286,11 +295,7 @@ int main(int argc, char** argv) {
     jpo_ransac_options_init(&opt);
     opt.max_error_px = 4.0;
     opt.min_inlier_ratio = 0.25;
-    struct Case {
-      uint32_t good, failing;
-      bool gpu;
-    };
-    for (const Case& c : {Case{8, 24, true}, Case{2, 6, false}, Case{32, 0, false}}) {
+    for (const Case& c : one_round_cases) {
       jposynth::Spec spec;
       spec.kind = 1;
       spec.points = 600;
@@ -325,7 +330,7 @@ int main(int argc, char** argv) {
       std::printf("%s auto, %u good + %u failing capped resections: gpu hypotheses %llu, solved %d/%u, capped %d/%u\n",
                   name.c_str(), c.good, c.failing, static_cast<unsigned long long>(st.gpu_hypotheses), solved, c.good,
                   capped, c.failing);
-      if ((st.gpu_hypotheses > 0) != c.gpu || solved != static_cast<int>(c.good) || capped != static_cast<int>(c.failing)) {
+      if ((c.gpu >= 0 && (st.gpu_hypotheses > 0) != (c.gpu == 1)) || solved != static_cast<int>(c.good) || capped != static_cast<int>(c.failing)) {
         std::printf("FAIL: one-round routing\n");
         ++fail;
       }

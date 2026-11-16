@@ -146,6 +146,46 @@ Reproduce: `python3 tools/bench.py --backends cpu,metal,auto`, `python3 tools/ac
 | pnp | 3000 | 2000 | 0.1 | 69709.46 | 23075.69 | 2827.51 | 4667.67 |
 | pnp | 3000 | 2000 | 0 | 69258.42 | 76738.37 | 7065.70 | 9167.19 |
 
+The `auto` column above is the rule as it was measured for M5 (1024 remaining); the current CUDA rule moves
+problems with 512 or more hypotheses left (next section).
+
+### `gpu_min_remaining` 512 on CUDA (the known gap)
+
+Batches of resections at 30 % inliers stop near 1000 iterations: after the 256-iteration CPU phase they
+need under 1024 more, so the old rule kept them on the CPU where CUDA alone was 5.8 to 7.3 times faster on
+200 points. Searched with `jpo bench --backends auto` and the rule overrides over the whole grid above: CPU
+phases of 128 and 256, 256 to 1024 remaining, totals of 2,000 and 5,000. With the 256-iteration phase, 256
+or 512 remaining change the routing of exactly six cells, the resection batches at 30 %, and of nothing
+else in the grid (CPU and GPU hypotheses, iterations and solved counts compared cell by cell); the total
+changes nothing. CUDA now uses 512.
+
+Resections at 30 % inliers, ms; `auto` columns are the best of two runs, all three interleaved in one
+window; cpu and cuda from the full grid run before it:
+
+| batch | points | cpu | cuda | auto, 1024 | auto, 512 | auto, 128-iteration phase |
+|---|---|---|---|---|---|---|
+| 32 | 200 | 10.24 | 1.78 | 9.78 | 3.70 | 2.77 |
+| 32 | 2000 | 25.77 | 18.95 | 26.70 | 17.26 | 15.31 |
+| 300 | 200 | 89.65 | 12.35 | 94.93 | 31.30 | 20.61 |
+| 300 | 2000 | 213.74 | 173.29 | 226.74 | 143.78 | 124.89 |
+| 3000 | 200 | 899.00 | 135.94 | 959.05 | 320.65 | 213.52 |
+| 3000 | 2000 | 2105.07 | 1766.42 | 2278.14 | 1437.68 | 1271.74 |
+
+- 1.5 to 3.0 times faster than the old rule. On 2000 points `auto` now beats both CPU and CUDA alone (it
+  finishes the problems that stop early on the CPU and sends the rest); on 200 points it is still 2.1 to
+  2.4 times behind CUDA alone, the cost of the 256-iteration CPU phase.
+- In the interleaved runs the old rule ran first in each pair and had a thermal advantage of about 10 %:
+  cells that route identically under all three settings, and some never touch the GPU (300 easy pairs:
+  83 against 94 to 96 ms), came out that much faster on it. Small differences between the columns
+  elsewhere in that run are this, not the rule.
+- Tried and not taken: a 128-iteration CPU phase with 512 remaining (last column). It gains more on these
+  cells and about 10 to 15 % on hard batches (3000 x 2000 at 10 %: 4171 against 4852 ms), but it re-routes
+  every hard problem and costs single easy pairs an extra CPU round: 0.60 → 0.90 ms on 200 points, 2.54 →
+  3.23 ms on 2000, as on Metal ("`auto` with a one-round budget"). 256 remaining routes as 512 does on
+  this grid; 512 is kept as the smaller change.
+- Calls whose budget fits in one GPU round follow CUDA's one-round numbers (below) and are not affected;
+  `jpo candidates` with the new rule matched the earlier runs within the laptop's drift.
+
 ## WebGPU
 
 Natively through Dawn on the M5 Pro the WebGPU backend costs what Metal costs (300 pairs of 200 matches with
@@ -243,8 +283,8 @@ A second run of the same command gave the same picture, with cells up to about 2
   table).
 - **With the option off**, Metal wins once half or more of the candidates fail (1.2 to 3.3 times the CPU),
   and `auto` sits between the two, as in the main table.
-- Not run: CUDA (it is on the NVIDIA laptop; its rule has no one-round numbers, so a one-round budget
-  follows its usual rule there) and WebGPU timings (likewise). The option is in the host driver, so every
+- CUDA: the next section, on the NVIDIA laptop. Not run: WebGPU timings (its rule has no one-round
+  numbers, so a one-round budget follows its usual rule there). The option is in the host driver, so every
   backend gets it without kernel changes; it was checked for function, not timed, on WebGPU natively
   (`backend_test webgpu`, Dawn) and in the browser (WebAssembly CPU, WebGPU and `auto` through `web/jpo.js`:
   failing candidates stop at 585 iterations, good ones unchanged on the CPU).
@@ -303,6 +343,166 @@ What was tried and dropped, measured on the same sets:
 - A 32-iteration phase for one-round budgets: about the same at K = 32, slower at K = 16 (0.84 against
   0.77 ms with no failing candidate, 1.58 against 1.46 at 50 %).
 - No short-phase gate: 0.05 to 0.15 ms slower on K = 8 rounds that never reach the GPU.
+
+## K candidates per registration round (RTX 2070 Max-Q, CUDA)
+
+The same `jpo candidates` sets as on the M5 Pro (above), on the NVIDIA laptop: i7-9750H (6 cores, 12
+threads), RTX 2070 Max-Q, Linux, on mains power. `auto` here is the rule before CUDA had one-round numbers:
+with the option on, nothing left the CPU. Reproduce: `jpo candidates --backends cpu,cuda,auto --failing
+0,0.25,0.5,0.75`.
+
+| K | failing | backend | batch, off | batch, 0.25 | one at a time, off | one at a time, 0.25 | good solved |
+|---|---|---|---|---|---|---|---|
+| 8 | 0 | cpu | 1.55 | 1.45 | 4.48 | 4.42 | 40/40 |
+| 8 | 0 | cuda | 3.15 | 2.13 | 8.69 | 7.98 | 40/40 |
+| 8 | 0 | auto | 1.55 | 1.48 | 4.20 | 4.23 | 40/40 |
+| 8 | 0.25 | cpu | 17.58 | 2.38 | 20.36 | 5.27 | 30/30 |
+| 8 | 0.25 | cuda | 5.80 | 1.56 | 12.32 | 6.19 | 30/30 |
+| 8 | 0.25 | auto | 6.28 | 2.65 | 11.13 | 4.95 | 30/30 |
+| 8 | 0.5 | cpu | 29.79 | 2.80 | 32.11 | 5.35 | 20/20 |
+| 8 | 0.5 | cuda | 5.78 | 1.43 | 15.03 | 4.90 | 20/20 |
+| 8 | 0.5 | auto | 6.77 | 2.98 | 15.11 | 5.00 | 20/20 |
+| 8 | 0.75 | cpu | 46.30 | 4.10 | 49.02 | 6.26 | 10/10 |
+| 8 | 0.75 | cuda | 8.33 | 1.75 | 21.03 | 5.05 | 10/10 |
+| 8 | 0.75 | auto | 8.62 | 3.98 | 22.67 | 6.05 | 10/10 |
+| 16 | 0 | cpu | 2.29 | 2.32 | 8.84 | 8.78 | 80/80 |
+| 16 | 0 | cuda | 3.74 | 2.31 | 13.64 | 12.51 | 80/80 |
+| 16 | 0 | auto | 2.28 | 2.33 | 8.66 | 8.51 | 80/80 |
+| 16 | 0.25 | cpu | 34.02 | 4.54 | 38.91 | 9.91 | 60/60 |
+| 16 | 0.25 | cuda | 9.07 | 2.16 | 27.04 | 11.29 | 60/60 |
+| 16 | 0.25 | auto | 8.66 | 4.39 | 20.86 | 9.38 | 60/60 |
+| 16 | 0.5 | cpu | 60.01 | 6.26 | 65.98 | 11.09 | 40/40 |
+| 16 | 0.5 | cuda | 10.86 | 2.37 | 35.34 | 11.40 | 40/40 |
+| 16 | 0.5 | auto | 11.18 | 5.86 | 32.55 | 10.92 | 40/40 |
+| 16 | 0.75 | cpu | 95.70 | 7.67 | 100.62 | 12.26 | 20/20 |
+| 16 | 0.75 | cuda | 12.68 | 1.95 | 42.19 | 9.73 | 20/20 |
+| 16 | 0.75 | auto | 13.44 | 7.21 | 45.13 | 12.08 | 20/20 |
+| 32 | 0 | cpu | 3.55 | 3.59 | 17.45 | 17.47 | 160/160 |
+| 32 | 0 | cuda | 5.97 | 3.22 | 26.01 | 23.69 | 160/160 |
+| 32 | 0 | auto | 3.59 | 3.58 | 17.07 | 16.90 | 160/160 |
+| 32 | 0.25 | cpu | 60.02 | 6.87 | 72.29 | 19.84 | 120/120 |
+| 32 | 0.25 | cuda | 13.46 | 3.49 | 45.45 | 23.35 | 120/120 |
+| 32 | 0.25 | auto | 11.65 | 6.64 | 39.84 | 19.35 | 120/120 |
+| 32 | 0.5 | cpu | 126.91 | 10.46 | 138.84 | 21.67 | 80/80 |
+| 32 | 0.5 | cuda | 17.38 | 3.13 | 64.59 | 21.55 | 80/80 |
+| 32 | 0.5 | auto | 17.37 | 10.03 | 65.85 | 21.42 | 80/80 |
+| 32 | 0.75 | cpu | 194.56 | 13.92 | 206.69 | 23.44 | 40/40 |
+| 32 | 0.75 | cuda | 22.18 | 3.16 | 83.29 | 19.57 | 40/40 |
+| 32 | 0.75 | auto | 23.14 | 13.41 | 90.45 | 24.26 | 40/40 |
+
+- **The option does more here than on the M5 Pro**, because the CPU has 6 cores instead of 18: in batches
+  with failing candidates it makes the CPU 7.4 to 14 times faster and CUDA 3.7 to 7.0 times. Every good
+  candidate was solved in every column; no failing candidate reached 25 % inliers.
+- **With the option on, CUDA alone beats the CPU in every round with failing candidates**, 1.5 to 4.4
+  times, and ties it with none failing at K = 16 and 32 (2.31 against 2.32 ms, 3.22 against 3.59). Only
+  K = 8 with none failing is faster on the CPU (1.45 against 2.13 ms). The old `auto` stayed on the CPU
+  (329 iterations left per candidate, under `gpu_min_remaining`) and was as slow as the CPU there.
+- **One batch beats one at a time**, with the option on, 1.5 to 4.9 times on the CPU and 2.9 to 7.4 times
+  on CUDA (every call pays for its own upload, launch and readback).
+
+### `auto` with a one-round budget on CUDA
+
+Searched with the rule overrides of `jpo candidates` (`--one-round-cpu-iter`, `--one-round-gpu-min-remaining`,
+`--one-round-gpu-min-total`), option on, all twelve cells per setting: CPU phases of 8, 16, 32, 64 and 128
+iterations, 128 or 256 remaining, totals of 500 to 5,000. The CPU phase is the cost: with totals of 2,000
+or less, 128 iterations put `auto` 2.0 to 2.2 times behind the faster of CPU and CUDA in its worst cell, 64
+iterations 1.5 to 1.6 times, 8 to 32 iterations 1.3 to 1.7 times. Totals of 5,000 left K = 8 and some K = 16
+rounds on the CPU where CUDA was 2.0 to 2.4 times faster; 500 to 1,500 were within noise of each other. CUDA's one-round numbers are now a CPU phase of 16 iterations,
+128 remaining and 1,000 in total (`src/core/auto_rule.cpp`); the short-phase gate is the same as Metal's
+(active problems x (budget − 16) ≥ 1,000), so a single capped problem keeps the old rule.
+
+Option on (0.25), batch of K candidates, ms; all four columns measured in one window, then again in a second
+one. The new rule agreed within 6 % between the two; the CPU column slowed by up to 12 % as the laptop
+warmed:
+
+| K | failing | cpu | cuda | auto, old rule | auto, one-round rule | good solved |
+|---|---|---|---|---|---|---|
+| 8 | 0 | 1.59 | 1.91 | 1.56 | 1.61 | 40/40 |
+| 8 | 0.25 | 2.37 | 1.59 | 2.71 | 2.01 | 30/30 |
+| 8 | 0.5 | 2.82 | 1.44 | 2.94 | 1.84 | 20/20 |
+| 8 | 0.75 | 4.07 | 1.73 | 3.98 | 1.86 | 10/10 |
+| 16 | 0 | 2.46 | 2.34 | 2.45 | 2.72 | 80/80 |
+| 16 | 0.25 | 4.52 | 2.15 | 4.44 | 2.62 | 60/60 |
+| 16 | 0.5 | 6.12 | 2.36 | 5.94 | 2.55 | 40/40 |
+| 16 | 0.75 | 8.01 | 2.03 | 7.74 | 2.30 | 20/20 |
+| 32 | 0 | 3.75 | 3.23 | 3.86 | 4.36 | 160/160 |
+| 32 | 0.25 | 7.39 | 3.45 | 6.89 | 4.30 | 120/120 |
+| 32 | 0.5 | 11.47 | 3.25 | 10.99 | 3.69 | 80/80 |
+| 32 | 0.75 | 15.29 | 3.20 | 14.57 | 3.48 | 40/40 |
+
+- **`auto` is 1.35 to 4.2 times faster than under the old rule** in every round with failing candidates,
+  and 0.1 to 0.9 ms behind CUDA alone there (1.1 to 1.3 times). The failing candidates move after 16 CPU
+  iterations; the rest of the gap is that phase.
+- **Rounds with no failing candidate lose a little.** K = 8 is within noise of the CPU (1.61 against 1.59 ms).
+  At K = 16 and 32, `auto` is 0.3 and 0.6 ms behind the CPU and 0.4 and 1.1 ms behind CUDA alone: after 16
+  iterations a few good candidates (4 of 32 in `backend_test`) have not found their model yet and move with
+  the rest, so the round pays for both a CPU phase and a dispatch. The runner-up, a 32-iteration phase
+  with 256 remaining, was faster there (K = 32 with none failing: 3.5 to 4.1 ms in three windows) but up
+  to 0.7 ms slower in rounds with failing candidates (the two windows above); neither was faster
+  everywhere.
+- Also within noise of the choice: 8 iterations with 128 remaining (the 12 cells summed to 32.6 ms against
+  33.5 in the same sweep); 16 was kept and confirmed in the two windows above. Dropped: any total of 5,000,
+  and 64 or 128 iterations.
+
+Calls with the default budget (10,000 iterations) route exactly as before: all 112 cells of `jpo bench
+--batches 1,2,4,8,32,300,3000 --backends auto` drew the same CPU and GPU hypotheses, iterations and solved
+counts with the new numbers and with `--one-round-cpu-iter 0` (the old rule).
+
+The rule applies to any call whose budget fits in one GPU round, not only to candidate rounds. Resections
+of the `jpo bench` grid with the option on (`jpo bench --kinds pnp --batches 1,8,32,300,3000
+--min-inlier-ratio 0.25 --backends cpu,cuda,auto`, against `--one-round-cpu-iter 0` for the old rule), ms:
+
+| batch | points | inliers | cpu | cuda | auto, old rule | auto, one-round rule |
+|---|---|---|---|---|---|---|
+| 1 | 200 | 0.7 | 0.25 | 0.52 | 0.27 | 0.29 |
+| 1 | 200 | 0.3 | 0.40 | 0.47 | 0.30 | 0.41 |
+| 1 | 200 | 0.1 | 0.35 | 0.29 | 0.28 | 0.32 |
+| 1 | 200 | 0 | 0.28 | 0.44 | 0.29 | 0.37 |
+| 1 | 2000 | 0.7 | 1.59 | 4.15 | 1.49 | 1.49 |
+| 1 | 2000 | 0.3 | 1.68 | 3.82 | 1.63 | 1.60 |
+| 1 | 2000 | 0.1 | 2.04 | 2.87 | 2.15 | 2.05 |
+| 1 | 2000 | 0 | 1.93 | 2.06 | 2.06 | 1.97 |
+| 8 | 200 | 0.7 | 0.67 | 0.94 | 0.58 | 0.59 |
+| 8 | 200 | 0.3 | 1.46 | 0.70 | 1.73 | 0.98 |
+| 8 | 200 | 0.1 | 1.44 | 0.65 | 1.55 | 0.70 |
+| 8 | 200 | 0 | 1.42 | 0.60 | 1.70 | 0.68 |
+| 8 | 2000 | 0.7 | 3.41 | 7.02 | 3.53 | 3.70 |
+| 8 | 2000 | 0.3 | 5.04 | 5.90 | 5.33 | 6.41 |
+| 8 | 2000 | 0.1 | 12.61 | 5.29 | 14.10 | 5.76 |
+| 8 | 2000 | 0 | 11.81 | 5.36 | 13.83 | 5.71 |
+| 32 | 200 | 0.7 | 1.54 | 1.91 | 1.77 | 1.68 |
+| 32 | 200 | 0.3 | 5.23 | 1.54 | 6.11 | 1.75 |
+| 32 | 200 | 0.1 | 5.28 | 1.17 | 6.38 | 1.36 |
+| 32 | 200 | 0 | 5.23 | 1.28 | 6.32 | 1.42 |
+| 32 | 2000 | 0.7 | 8.68 | 17.28 | 10.34 | 9.14 |
+| 32 | 2000 | 0.3 | 16.51 | 14.52 | 18.89 | 14.53 |
+| 32 | 2000 | 0.1 | 42.15 | 11.57 | 48.99 | 13.39 |
+| 32 | 2000 | 0 | 44.76 | 11.66 | 52.54 | 11.87 |
+| 300 | 200 | 0.7 | 11.60 | 10.98 | 13.69 | 12.18 |
+| 300 | 200 | 0.3 | 46.62 | 8.43 | 52.90 | 9.87 |
+| 300 | 200 | 0.1 | 48.11 | 6.98 | 55.33 | 8.35 |
+| 300 | 200 | 0 | 47.54 | 6.70 | 54.92 | 7.94 |
+| 300 | 2000 | 0.7 | 80.26 | 84.67 | 90.18 | 82.74 |
+| 300 | 2000 | 0.3 | 139.77 | 63.85 | 156.97 | 70.86 |
+| 300 | 2000 | 0.1 | 374.88 | 54.91 | 420.73 | 67.06 |
+| 300 | 2000 | 0 | 427.94 | 52.63 | 474.38 | 63.82 |
+| 3000 | 200 | 0.7 | 121.50 | 77.37 | 135.26 | 133.63 |
+| 3000 | 200 | 0.3 | 476.34 | 70.99 | 520.94 | 73.05 |
+| 3000 | 200 | 0.1 | 505.47 | 68.67 | 547.70 | 57.52 |
+| 3000 | 200 | 0 | 502.66 | 47.55 | 542.10 | 54.53 |
+| 3000 | 2000 | 0.7 | 851.72 | 919.91 | 905.28 | 910.57 |
+| 3000 | 2000 | 0.3 | 1480.44 | 711.52 | 1533.41 | 772.35 |
+| 3000 | 2000 | 0.1 | 4180.69 | 589.53 | 4218.10 | 729.18 |
+| 3000 | 2000 | 0 | 4719.50 | 564.19 | 4653.97 | 710.37 |
+
+- Hard batches gain the most: `auto` goes from the CPU's speed to within 1.0 to 1.3 times of CUDA alone,
+  for example 300 x 2000 points at 10 % 420.7 → 67.1 ms, 3000 x 2000 with no model 4654 → 710 ms. With the
+  option set, this also closes the known gap on 200-point resections at 30 % (3000 of them: 520.9 → 73.0
+  ms). With the default budget, `gpu_min_remaining` 512 narrows it (above: 959 → 321 ms).
+- One cell is worse: 8 x 2000 points at 30 %, 5.33 → 6.41 ms (CPU 5.04, CUDA alone 5.90). Single problems
+  cannot take the one-round path (1 x 569 < 1,000), so the differences in batch 1 rows are noise.
+- Solved counts are the same as under the old rule in all 40 cells. The median error differs only in three
+  sets at 10 %, where the median problem is unsolved anyway.
 
 ## Accuracy against PoseLib (M5 Pro)
 

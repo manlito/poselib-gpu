@@ -297,7 +297,9 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
   - **Done, with less tuning than planned.** Tables for PoseLib, CPU, Metal and CUDA in RESULTS.md, and the
     `auto` rule per backend below. Device inputs were not added (no copy showed in a profile). Known gap in
     `auto`: resections of 200 points at 30 % inliers stop near 1000 iterations, under the rule's threshold, so `auto`
-    stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches.
+    stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches. On CUDA
+    the threshold is now 512 and those batches run 1.5 to 3 times faster, still 2.1 to 2.4 times behind
+    CUDA alone on 200 points; Metal keeps the gap (lowering its threshold slowed other cells).
 
 - [x] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
@@ -339,7 +341,7 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 | Backend | Measured on | cpu_iterations | gpu_min_remaining | gpu_min_total |
 |---|---|---|---|---|
 | Metal | M5 Pro, 18 threads | 256 | 1024 | 50,000 |
-| CUDA | RTX 2070 Max-Q, i7-9750H | 256 | 1024 | 5,000 |
+| CUDA | RTX 2070 Max-Q, i7-9750H | 256 | 512 | 5,000 |
 | WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
 | WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
 
@@ -352,7 +354,8 @@ otherwise, and on backends without them, the numbers above apply.
 | Backend | one-round cpu_iterations | gpu_min_remaining | gpu_min_total |
 |---|---|---|---|
 | Metal | 64 | 256 | 5,000 |
-| CUDA, WebGPU | not measured: the numbers above | | |
+| CUDA | 16 | 128 | 1,000 |
+| WebGPU | not measured: the numbers above | | |
 
 The numbers belong to those machines. Another CPU/GPU pair would want its own; nothing calibrates at run time.
 
@@ -384,6 +387,13 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
   route exactly as before (all 112 cells of the grid checked). Lowering the general thresholds instead was
   tried and dropped: it closed the known gap on 200-point resections at 30 % but slowed single easy
   problems and small hard batches (RESULTS.md, "`auto` with a one-round budget").
+- On CUDA (RTX 2070 Max-Q against 6 cores) the option makes a round 7 to 14 times faster on the CPU and 4
+  to 7 times on CUDA, and CUDA alone then beats the CPU 1.5 to 4.4 times in every round with failing
+  candidates. Its one-round numbers (16 CPU iterations, 128 remaining, 1,000 in total) make `auto` 1.35 to
+  4.2 times faster than the old rule there and 1.1 to 1.3 times behind CUDA alone; rounds with no failing
+  candidate are 0.3 to 0.6 ms behind the CPU at K = 16 to 32. Default budgets route as before (112 cells).
+  On the general resection grid with the option set, hard batches go from the CPU's speed to near CUDA's
+  (RESULTS.md, "`auto` with a one-round budget on CUDA").
 - Left to the pipeline: ranking candidates, the acceptance threshold, building 2D-3D matches from tracks,
   and stopping after N successes. World points are copied per candidate (under 1 MB per round); there is
   no indexed form.
@@ -411,9 +421,14 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - The accuracy shortfall on the hardest relative-pose set (M1).
 - Windows, and the hosted CI workflow, have never run.
 - Browsers other than one Chromium; the browser timings are a single run.
-- `min_inlier_ratio` on CUDA (built on the NVIDIA laptop, not run for this change) and WebGPU timings for it.
+- WebGPU timings for `min_inlier_ratio`, and one-round numbers for WebGPU.
 - `auto` with `min_inlier_ratio` set is still 0.15 to 0.5 ms per round behind Metal alone at K = 16 to 32
-  with failing candidates (the 64-iteration CPU phase). One-round numbers for CUDA and WebGPU.
+  with failing candidates (the 64-iteration CPU phase), and 0.1 to 0.9 ms behind CUDA alone (the
+  16-iteration phase); on CUDA, rounds with no failing candidate at K = 16 to 32 are 0.3 to 0.6 ms behind
+  the CPU.
+- On CUDA, a 128-iteration CPU phase would be 10 to 15 % faster on hard batches and closer to CUDA alone on
+  200-point resections at 30 %, but costs single easy pairs an extra CPU round (0.60 → 0.90 ms). A CPU phase
+  that does not split the CPU rounds of problems that finish in it might get both; not tried.
 
 ## Development machines
 
