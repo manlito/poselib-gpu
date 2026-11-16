@@ -31,11 +31,11 @@ xy (+cov)           matches per pair    verified matches,        tracks, triangu
 |---|---|
 | Source | PoseLib (BSD-3-Clause), pinned at one commit in M0. Ported code keeps its copyright notice. PoseLib itself is a test-only reference, as Ceres is in just-ba. |
 | Scope | Calibrated cameras only: 5-point relative pose, P3P absolute pose, LO-RANSAC, non-linear refinement. Nothing else until M2 shows it is needed. |
-| GPU rule | A GPU path exists only where it is measured faster than our own CPU backend on all threads, on problem sizes a capture really produces. Anything known in advance to be slower is not written. See "Where the GPU is used". |
+| GPU rule | A GPU path exists only where it is measured faster than our own CPU backend on all threads, on problems a capture really produces. Judged after a path is built and tuned, not before; only work known in advance to be slower (refinement, emulated double) is never written. See "Where the GPU is used". |
 | CPU backend | A complete, threaded library in its own right, not only a reference: it is what runs wherever the GPU loses. |
 | Batches | Every call takes many problems (pairs, or images to register) at once. The CPU backend spreads them over threads; a GPU path, where one exists, takes the whole batch in one dispatch. |
-| GPU work | Only the bulk: solving the minimal problems of a round and scoring every hypothesis against every point, for whole batches of pairs. |
-| Host work | Everything else: the stopping rule, refinement, the final polish, and every call below the size where the GPU wins. |
+| GPU work | The RANSAC round, for both estimators: 2048 hypotheses per problem solved and scored against every point in one dispatch, for one problem or a batch. |
+| Host work | The stopping rule, refinement, the final polish, and the problems `auto` routes to the CPU. |
 | Precision | GPU kernels in float32 (Metal and WGSL have no double). The returned pose is always polished on the host in double. See "Precision". |
 | Determinism | Counter-based random numbers: sample = hash(seed, problem, round, hypothesis). Every backend draws the same samples, so backends can be compared hypothesis by hypothesis. |
 | Cameras | just-ba's six models, with COLMAP's names, ids and parameter order (`SIMPLE_PINHOLE` ... `OPENCV_FISHEYE`). Keypoints are unprojected to bearings once; solvers never see a camera model. |
@@ -81,27 +81,42 @@ So the whole function set is two estimators and their refinement.
 
 The rule: no GPU code for work the CPU does faster. What can be said before measuring anything:
 
-| Work | Size | GPU? | Why |
-|---|---|---|---|
-| Verify all pairs of a capture (relative pose) | hundreds to thousands of pairs, 200-2000 matches each, hundreds of hypotheses each: 1e8-1e10 residuals | **Candidate** | The only large, uniform workload here. Decided by the gate in M3. |
-| Relative pose of one pair, or a handful | 1e5-1e6 residuals | No | A millisecond or less on one core; a dispatch and a readback cost about as much before any work is done. |
-| Register one image (PnP) | one problem, P3P needs few rounds | No | The incremental loop registers one image at a time. Sub-millisecond on the CPU. |
-| Register many candidate images at once | tens of problems | No, unless M2 shows the mapper wants it and the M3 gate passes for it | Not assumed. |
-| Refinement (6 or 5 unknowns per problem) | thousands of residuals, a few iterations | No | Microseconds per problem; needs double; trivially threaded over the batch. |
-| Stopping rule, sampling bookkeeping, final polish | tiny | No | |
-| Triangulation, tracks | | No | In just-ba, CPU by its own decision. |
+The unit of GPU work is one round: 2048 hypotheses of one problem, solved and scored against all its points
+in one dispatch. For a pair with 2000 matches that is 2048 samples x up to 10 essential matrices x 2000
+points = 4e7 Sampson errors (estimate); for a resection, 2048 x up to 4 poses x the 2D-3D matches. Nothing
+in it depends on anything else in it, which is the shape a GPU is built for, and on Metal the buffers are
+shared with the host, so there is no upload or readback copy to pay for.
 
-Consequences:
+When that round beats the CPU's serial loop, by estimate (to be measured in M3):
 
-- `backend = auto` picks the GPU only for a relative-pose batch above the measured break-even size, and the
-  CPU for everything else. Asking for a GPU backend explicitly below that size still works but is documented
-  as slower.
-- Absolute pose has no GPU kernels in this plan. Three GPU backends for PnP would be four copies of code
-  that never wins.
-- In the browser the comparison is different: the WebAssembly CPU backend runs on one thread, so the
-  break-even size is lower there and is measured separately (M6). It is still a measurement, not an assumption.
-- If the M3 gate fails, the project ends as a small, fast CPU library with a WebAssembly build, and M4-M6
-  shrink to "build and test the CPU backend on that target".
+- **Hard problems**: low inlier ratio. The CPU needs thousands of iterations (about 14,000 five-point
+  samples at 20 % inliers for 99 % confidence, 145 at 50 %), each scored against every point.
+- **Pairs that do not match at all**: the CPU never meets its stopping rule and runs to the iteration
+  limit. In pair verification these are a large share of the candidates, so the CPU's worst case is common.
+- **Batches**: many problems in one dispatch.
+- It also buys quality: 2048 hypotheses where the stopping rule would have accepted the first good one.
+
+When it does not: an easy pair that the CPU settles in a few dozen iterations, and very small problems.
+There the GPU computes hypotheses the CPU would have skipped. `auto` has to tell these apart cheaply, for
+example by running a short CPU round first and going to the GPU only if it did not finish.
+
+| Work | GPU? | Why |
+|---|---|---|
+| Relative pose: solve + score + select, one problem or a batch | **Yes, to be proven in M3** | The round above. |
+| Absolute pose (PnP): solve + score + select, one problem or a batch | **Yes, to be proven in M3** | Same round, same kernels except the residual. Registration against a noisy map is where low inlier ratios show up. |
+| Refinement (6 or 5 unknowns per problem) | No | Microseconds per problem, needs double, threads trivially. |
+| Stopping rule, sampling bookkeeping, final polish | No | Tiny. |
+| Double emulated with pairs of floats | No | Several times the arithmetic. |
+| Triangulation, tracks | No | In just-ba, CPU by its own decision. |
+
+The rule still holds, applied after a fair attempt rather than before one:
+
+- Each GPU path is built, then tuned, then judged (M3). It is judged per estimator and per kind of problem
+  (easy, hard, no model; one problem and batches), not as one yes or no.
+- `backend = auto` uses the GPU where it measured faster and the CPU elsewhere. A cell where the GPU loses
+  after tuning is routed to the CPU; a path is removed only if it wins nowhere.
+- In the browser the WebAssembly CPU backend runs on one thread, so the GPU should win over a wider range
+  there; measured separately in M6.
 
 ## Public API (C, plain buffers)
 
@@ -130,7 +145,7 @@ void jpo_destroy(jpo_ctx*);
 PoseLib's loop is serial: one sample, solve, score, maybe refine, test the stopping rule. Here it runs in
 rounds, on every backend, so the CPU and a GPU path do the same work in the same order:
 
-1. **Sample** H minimal sets per problem (H ~ 64-1024, by problem size and backend).
+1. **Sample** H minimal sets per problem (small on the CPU, 2048 on a GPU).
 2. **Solve** them. 5-point gives up to 10 essential matrices, P3P up to 4 poses.
 3. **Score**: Sampson error for relative pose (threshold divided by the focal length, as PoseLib),
    reprojection error through the camera model for PnP; truncated squared error (MSAC) per hypothesis.
@@ -142,7 +157,7 @@ rounds, on every backend, so the CPU and a GPU path do the same work in the same
 On the CPU, rounds are small and a problem stops as soon as it can, which is why an easy pair costs almost
 nothing. On a GPU path steps 2-4 are one dispatch for the whole batch and one readback of a few values per
 problem; a GPU round computes hypotheses the CPU would have skipped, so the GPU has to win by more than
-that waste. The gate in M3 measures exactly this.
+that waste on easy problems, and wins outright on problems the CPU cannot stop early on. M3 measures both.
 
 ## Precision
 
@@ -204,39 +219,41 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
   - **Exit:** scenes reconstruct; any function found missing is added to the scope here, before it has to be
     written four times. Decides G1-G3 and whether homography comes back.
 
-- [ ] **M3 — The GPU gate** (Metal, M5 laptop)
-  - First make the CPU backend as fast as it should be (threads over problems, early stopping, no
-    allocations per round) and record pairs per second against PoseLib. This is the number to beat.
-  - Then the smallest GPU path that could win: relative-pose batches only, solve + score + select in one
-    dispatch per round, shared-storage buffers. No PnP, no refinement on the device.
-  - Measure pairs per second by batch size (1, 32, 300, 3000 pairs) and matches per pair (200, 2000), at
-    easy and hard inlier ratios, end to end from host buffers to poses and masks.
-  - **Exit, one of two:**
-    - *Pass*: Metal is faster than the CPU backend from some batch size a capture reaches. Record the
-      break-even size; `auto` uses it. M4-M6 port this path.
-    - *Fail*: it is not. The Metal path is deleted, not kept as an option. M4 and M6 become CPU-only builds
-      on their targets, M5 is dropped.
+- [ ] **M3 — Runs on the Mac GPU, and is judged there** (Metal, M5 laptop)
+  - The CPU backend made as fast as it should be first (threads over problems, early stopping, no
+    allocations per round), timed against PoseLib. This is the number to beat.
+  - The Metal round for both estimators: 2048 hypotheses per problem, solve + score + select in one
+    dispatch, shared-storage buffers, one problem or a batch. `ops_test` per kernel and `metal_vs_cpu`
+    against the float CPU build: same samples, same best hypothesis, same inlier masks except points on the
+    threshold.
+  - A tuning pass before any verdict: hypotheses per round, threads per hypothesis against per block of
+    points, early rejection, what is read back.
+  - Measured end to end, from host buffers to poses and masks, for relative pose and PnP: one problem and
+    batches of 32, 300 and 3000; 200 and 2000 points; inlier ratios 70 %, 30 %, 10 % and none.
+  - **Exit:** M0 metrics as M1 on Metal; the table of where Metal wins and by how much; the rule `auto`
+    uses, taken from that table. A path that wins nowhere after tuning is removed, and what was tried is
+    written down.
 
-- [ ] **M4 — NVIDIA** (CUDA, the laptop)
-  - If the gate passed: the same kernel source behind the CUDA prelude, the same tests, and the same
-    measurement against the CPU backend on that machine. A backend that loses on its own machine is not
-    shipped there.
-  - Either way: CPU backend built and tested on Linux and Windows.
+- [ ] **M4 — Runs on NVIDIA** (CUDA, the laptop)
+  - The paths that won on Metal, from the same kernel source behind the CUDA prelude; same tests; the same
+    table on that machine, with its own `auto` rule (a discrete GPU pays for upload and readback that Metal
+    does not).
+  - CPU backend built and tested on Linux and Windows.
+  - **Exit:** as M3 with `--backend cuda`.
 
-- [ ] **M5 — Fast** (only if the gate passed)
-  - Tuning where the profile points: hypotheses per round, early rejection of bad hypotheses, device inputs
-    from just-matching, problems of very different sizes in one batch.
-  - Benchmark table: pairs per second by batch size and matches per pair, for PoseLib on all threads, our
-    CPU backend, Metal and CUDA.
-  - **Exit:** documented numbers and the break-even batch size per backend.
+- [ ] **M5 — Fast**
+  - Tuning on both machines where the profiles point: rounds for problems of very different sizes in one
+    batch, device inputs from just-matching, less waste on easy problems.
+  - Benchmark table: problems per second by batch size, points and inlier ratio, for PoseLib on all
+    threads, our CPU backend, Metal and CUDA.
+  - **Exit:** documented numbers and the final `auto` rule per backend.
 
 - [ ] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
-  - If the gate passed: WGSL port of the relative-pose path, natively through Dawn with the same tests, then
-    Emscripten; device supplied by the caller. Measured against the WebAssembly CPU backend in Chrome, with
-    its own break-even size.
-  - **Exit:** `web/test.html` reproduces the native CPU results on the test sets; timings in Chrome; WebGPU
-    is used in the browser only above its measured break-even size.
+  - WGSL port of the paths that won, natively through Dawn with the same tests, then Emscripten; device
+    supplied by the caller. Measured against the WebAssembly CPU backend in Chrome, with its own `auto` rule.
+  - **Exit:** `web/test.html` reproduces the native CPU results on the test sets; timings natively and in
+    Chrome.
 
 - [ ] **M7 — Public docs and demo** (Cloudflare Pages)
   - Site: build, quick start, concepts (rounds, precision, conventions), C API, accuracy and speed, in the
@@ -256,17 +273,16 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
 ## Development machines
 
 - M0, M1, M2, M3, M6, M7, M8 on the M5 Pro laptop (WebGPU through Dawn uses Metal there).
-- M4 and the CUDA columns of M5 on the NVIDIA laptop, after the gate in M3. The gate could run on CUDA
-  first instead, if that machine is the one at hand; one pass or fail decides for both, and each backend
-  still has to win on its own machine to ship.
+- M4 and the CUDA columns of M5 on the NVIDIA laptop, after M3. M3 and M4 can swap if that machine is the
+  one at hand; each backend is judged on its own machine.
 
 ## Main risks
 
 | Risk | Effect | Response |
 |---|---|---|
-| The GPU does not beat the CPU on the batches a capture produces | GPU work wasted | Decided at the M3 gate with one backend and one estimator, before anything is ported; on a fail the GPU path is removed and the CPU library ships |
+| The GPU wins only on hard problems and loses on easy ones | `auto` must choose well or it makes easy captures slower | Judged per kind of problem in M3 on one backend, after tuning and before anything is ported; a short CPU round first, GPU only for what did not finish |
 | float32 5-point solver is too inaccurate | Fewer good hypotheses, more rounds | Measured in M1; host-side double solves as fallback |
-| Copies of the solvers drift apart | Backend-specific bugs | One source for CPU, CUDA and Metal; WGSL checked per operation; identical samples on every backend; only the relative-pose path exists on GPUs |
+| Copies of the solvers drift apart | Backend-specific bugs | One source for CPU, CUDA and Metal; WGSL checked per operation; identical samples on every backend; the two estimators share every kernel but the residual |
 | WGSL cannot turn off fused multiply-add or guarantee rounded division | WebGPU picks another best hypothesis on near ties | Compare by metrics there, not bit for bit (as just-keypoints M6) |
 | The function set is too small for real captures | Late additions on four backends | M2 comes before any GPU work |
 
