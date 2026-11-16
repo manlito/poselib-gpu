@@ -208,6 +208,11 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
     cpu_iterations = route.one_round_cpu_iterations;
     gpu_min_remaining = route.one_round_gpu_min_remaining;
     gpu_min_total = route.one_round_gpu_min_total;
+  } else if (cpu && gpu && cpu_iterations != 0xffffffffu) {
+    // With fewer problems than threads the CPU widens a round so every thread has a chunk; ending the
+    // CPU phase inside that first round would leave threads idle for the same wall time and cost an
+    // easy problem a second round. So the phase lasts at least the CPU's first round.
+    cpu_iterations = std::max(cpu_iterations, cpu->round_size(n_start, 0));
   }
 
   std::vector<RoundItem> items[2];
@@ -248,7 +253,12 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
       const int b = st.on_gpu ? 1 : 0;
       const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
       uint32_t count = std::min((b == 0 ? cpu : gpu)->round_size(count_b[b], st.iters), need - st.iters);
-      if (b == 0 && gpu && st.iters < cpu_iterations) count = std::min(count, cpu_iterations - st.iters);
+      // The CPU phase ends exactly at cpu_iterations so that a problem can move to the GPU there. A
+      // problem that cannot (need never grows, so it would have fewer than gpu_min_remaining left) keeps
+      // its whole CPU round instead of paying for an extra one.
+      if (b == 0 && gpu && st.iters < cpu_iterations &&
+          static_cast<uint64_t>(need) >= static_cast<uint64_t>(cpu_iterations) + gpu_min_remaining)
+        count = std::min(count, cpu_iterations - st.iters);
       RoundItem it;
       it.problem = static_cast<uint32_t>(i);
       it.first = st.first;
