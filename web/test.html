@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- The browser test: the same generated problems as the native tools (`jpo webcheck`), on every backend
+     of this build. Serve this directory (python3 -m http.server) and open the page; ?quick=1 runs less. -->
+<meta charset="utf-8">
+<title>jpo browser test</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 2em; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  #status { margin: 1em 0; font-weight: 600; }
+</style>
+<h1>jpo browser test</h1>
+<p>Each row is a generated problem set. "solved" counts poses within 5 degrees (relative) or 1 degree (absolute)
+of the ground truth; compare the rows with the output of <code>jpo webcheck</code>.</p>
+<div id="status">running…</div>
+<table id="table"><tr><th>set</th><th>backend</th><th>solved</th><th>median error (deg)</th><th>mean iterations</th><th>ms</th></tr></table>
+<pre id="log"></pre>
+<script type="module">
+import { createJpoModule, Jpo, BACKEND, synth, poseErrors } from "./jpo.js";
+
+const quick = new URLSearchParams(location.search).has("quick");
+// The sets of `jpo webcheck` (cli/main.cpp): keep the two lists the same.
+const sets = [
+  { name: "relpose easy", kind: 0, count: 20, points: 1000, inliers: 0.7, noise: 0.5, seed: 201 },
+  { name: "relpose hard", kind: 0, count: 20, points: 1000, inliers: 0.3, noise: 0.5, seed: 202 },
+  { name: "relpose none", kind: 0, count: 20, points: 300, inliers: 0, noise: 0.5, seed: 203 },
+  { name: "pnp easy", kind: 1, count: 20, points: 1000, inliers: 0.7, noise: 1, seed: 204 },
+  { name: "pnp hard", kind: 1, count: 20, points: 1000, inliers: 0.1, noise: 1, seed: 205 },
+  { name: "pnp none", kind: 1, count: 20, points: 300, inliers: 0, noise: 1, seed: 206 },
+];
+const log = (text) => (document.getElementById("log").textContent += text + "\n");
+const rows = [];
+try {
+  const module = await createJpoModule();
+  const backends = [["cpu", BACKEND.CPU]];
+  if (module._jpow_backend_available(BACKEND.WEBGPU) && navigator.gpu) backends.push(["webgpu", BACKEND.WEBGPU], ["auto", BACKEND.AUTO]);
+  for (const [name, id] of backends) {
+    let jpo;
+    try {
+      jpo = await Jpo.create(module, { backend: id });
+    } catch (e) {
+      log(`${name}: ${e.message}`);
+      continue;
+    }
+    for (const set of quick ? sets.slice(0, 2) : sets) {
+      const problem = synth(module, set);
+      let best = Infinity, out;
+      for (let r = 0; r < 3; ++r) {
+        const t0 = performance.now();
+        out = set.kind === 0 ? await jpo.relativePose(problem) : await jpo.absolutePose(problem);
+        best = Math.min(best, performance.now() - t0);
+      }
+      const errors = [];
+      let solved = 0, iterations = 0;
+      out.results.forEach((r, i) => {
+        iterations += r.iterations;
+        const gt = problem.gt.slice(7 * i, 7 * i + 7);
+        if (Number.isNaN(gt[0])) {
+          solved += r.nInliers <= 30 ? 1 : 0;
+          return;
+        }
+        let e = 180;
+        if (r.status === 0) {
+          const [rot, tr] = poseErrors(set.kind, r.pose, gt);
+          e = set.kind === 0 ? Math.max(rot, tr) : rot;
+        }
+        errors.push(e);
+        solved += e < (set.kind === 0 ? 5 : 1) ? 1 : 0;
+      });
+      errors.sort((a, b) => a - b);
+      const median = errors.length ? errors[Math.floor(errors.length / 2)] : NaN;
+      const row = { set: set.name, backend: name, solved, median, iterations: iterations / set.count, ms: best };
+      rows.push(row);
+      const tr = document.getElementById("table").insertRow();
+      [row.set, row.backend, `${solved}/${set.count}`, median.toFixed(4), row.iterations.toFixed(0), best.toFixed(1)].forEach((v) => (tr.insertCell().textContent = v));
+    }
+    jpo.destroy();
+  }
+  document.getElementById("status").textContent = "done";
+} catch (e) {
+  document.getElementById("status").textContent = "failed: " + e.message;
+  log(e.stack || String(e));
+}
+window.jpoTestRows = rows;  // for automated runs
+</script>

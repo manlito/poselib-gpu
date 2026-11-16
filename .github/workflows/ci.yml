@@ -1,0 +1,63 @@
+# CPU tests and the WebAssembly build, on free hosted runners. GPU tests are run by hand on the
+# development machines (README.md, "Tests").
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  EMSCRIPTEN_VERSION: "7.0.0"
+
+jobs:
+  cpu:
+    name: CPU tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@v4
+      # PoseLib and Eigen: the reference of the parity test (not needed by the library).
+      - name: Fetch the reference
+        if: runner.os != 'Windows'
+        run: tools/fetch_reference.sh
+      - name: Configure
+        run: cmake -S . -B build -DJPO_METAL=OFF -DJPO_CUDA=OFF -DJPO_WEBGPU=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  wasm:
+    name: WebAssembly build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+          sudo apt-get install -y ninja-build
+      - name: Fetch emdawnwebgpu
+        run: tools/fetch_webgpu.sh browser
+      - name: Build the module
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          emcmake cmake -S . -B build/wasm -G Ninja -DJPO_WEBGPU=ON
+          cmake --build build/wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jpo-web
+          path: build/wasm/web

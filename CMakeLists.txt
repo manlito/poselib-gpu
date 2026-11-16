@@ -167,8 +167,8 @@ if(EMSCRIPTEN AND JPO_BUILD_WASM)
   set_target_properties(jpo_wasm PROPERTIES SUFFIX ".js" RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/web")
   target_link_options(jpo_wasm PRIVATE
     -sJSPI
-    "-sJSPI_EXPORTS=jpow_create,jpow_run"
-    "-sEXPORTED_FUNCTIONS=_malloc,_free,_jpow_backend_available,_jpow_create,_jpow_destroy,_jpow_run,_jpow_synth,_jpow_error"
+    "-sJSPI_EXPORTS=jpow_create,jpow_relative,jpow_absolute"
+    "-sEXPORTED_FUNCTIONS=_malloc,_free,_jpow_backend_available,_jpow_create,_jpow_destroy,_jpow_relative,_jpow_absolute,_jpow_synth,_jpow_error"
     "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF64,UTF8ToString"
     -sMODULARIZE
     -sEXPORT_ES6

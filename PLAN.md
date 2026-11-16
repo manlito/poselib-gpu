@@ -5,10 +5,12 @@ Minimal-dependency robust pose estimation for bundle-adjustment pipelines: relat
 `../just-matching` and `../just-ba` (C++ core, no PyTorch or other framework at run time). A fast CPU
 library first; hand-written Metal / CUDA / WebGPU kernels only for the work where a GPU is measured faster.
 
-Status: plan only. Nothing is built or measured yet; every number below is an estimate or a target.
+Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 and M8 are not started.
+Sections above "Results" are the plan as it was followed; where the implementation differs from the first
+plan, "What changed while building" says how and why.
 
-Working name: the repository is `poselib-gpu`; the plan uses the C prefix `jpo_` (`jpo.h`, CLI `jpo`),
-after `jkp`, `jmt` and `jba`. Rename before M1 if another name is wanted.
+Working name: the repository is `poselib-gpu`; the code uses the C prefix `jpo_` (`jpo.h`, CLI `jpo`),
+after `jkp`, `jmt` and `jba`. Still a placeholder (open question).
 
 ## Where it sits
 
@@ -124,21 +126,25 @@ The rule still holds, applied after a fair attempt rather than before one:
 jpo_ctx* jpo_create(const jpo_config*);        /* backend, device (optional), seed */
 
 /* B pairs. xy_a/xy_b: matched pixels, concatenated; offsets[B+1] delimits each pair. */
-int jpo_relative_pose(jpo_ctx*, const jpo_pairs*, const jpo_ransac_options*, jpo_relative_result*);
+int jpo_relative_pose(jpo_ctx*, const jpo_pairs*, const jpo_ransac_options*, jpo_pose_result*, uint8_t* inliers);
 
 /* B images. xy: pixels, xyz: world points, concatenated the same way. */
-int jpo_absolute_pose(jpo_ctx*, const jpo_resections*, const jpo_ransac_options*, jpo_absolute_result*);
+int jpo_absolute_pose(jpo_ctx*, const jpo_resections*, const jpo_ransac_options*, jpo_pose_result*, uint8_t* inliers);
 
 void jpo_destroy(jpo_ctx*);
 ```
 
 - Inputs name a camera per image (`model`, intrinsics as doubles), shared across problems where equal.
-- `jpo_ransac_options`: `max_error_px`, `confidence`, `min_rounds`, `max_rounds`, `refine` (on by default).
-- Results per problem: pose (7 doubles), `n_inliers`, `score` (MSAC), `rounds`, `status`; per point an
-  inlier byte. Relative results add `median_tri_angle_deg`.
-- Host buffers only at first. Device buffers as input (so just-matching's output need not visit the host)
-  are added in M5, and only if the copy shows up in the profile.
-- `status` separates "no model found", "too few points" and "degenerate" from success.
+- `jpo_ransac_options`: `max_error_px` (default 1 for pairs, 4 for resections), `confidence` (0.9999),
+  `min_iterations` (100), `max_iterations` (10000), `refine` (on by default). Iterations, not rounds: the
+  numbers mean what they mean in PoseLib, on every backend.
+- Results per problem, one struct for both estimators: pose (7 doubles), `n_inliers`, `score` (MSAC),
+  `iterations`, `status`, and `median_tri_angle_deg` (relative pose; 0 otherwise); per point an inlier byte.
+- Host buffers only. Device buffers as input were to be added only if the copy showed up in a profile; it
+  did not (the upload is one small buffer per call), so they were not.
+- `status` separates "no model found", "too few points" and "degenerate" from success. `JPO_OK` says that
+  a model with more inliers than a minimal sample was found, not that the pair is a true match: whether a
+  pair or a registration is accepted is the caller's rule on `n_inliers` (found in M2).
 
 ## RANSAC in rounds
 
@@ -182,7 +188,7 @@ src/backend/cpu/         reference; double or float; threads natively, one threa
 src/backend/metal/       prelude + Objective-C++ glue, shaders compiled at jpo_create
 src/backend/cuda/        prelude + glue
 src/backend/webgpu/      kernels.wgsl + C++ glue (Dawn native / Emscripten)
-cli/                     jpo relpose | pnp | bench
+cli/                     jpo gen | run | bench | webcheck | backends
 tools/                   dev-only Python: PoseLib reference, synthetic and real problem files, compare, bench
 tests/                   solver tests, <backend>_vs_cpu, PoseLib parity, incremental test (M2)
 third_party/             PoseLib and Dawn, fetched by script, ignored by git
@@ -194,7 +200,7 @@ docs/                    documentation site + live demo (Cloudflare Pages)
 
 Each milestone is a state that can be run and checked. Numbers are filled in when it closes.
 
-- [ ] **M0 — Reference locked** (M5 laptop)
+- [x] **M0 — Reference locked** (M5 laptop)
   - PoseLib pinned and built as a test-only dependency; `tools/` runs it from Python.
   - Problem files: synthetic (noise, outlier ratio, planar, small baseline, each camera model) and real
     (pairs matched by just-keypoints + just-matching; 2D-3D sets from a COLMAP model).
@@ -204,22 +210,46 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     target for M5 and tells whether the GPU can win at all for small batches.
   - **Exit:** `tools/compare.py` reports the metrics for PoseLib against itself across seeds (the noise
     floor every later comparison is read against).
+  - **Done, in part.** PoseLib 6a636b1d and Eigen 3.4.0 fetched by `tools/fetch_reference.sh`;
+    `poselib_ref` reads the problem files; `tools/compare.py` and `tools/accuracy.py` report the metrics
+    over five seeds (RESULTS.md). **Not done:** real problem files. This machine has no image sets, no
+    COLMAP and no exported matches, so every set is generated (`jpo gen`: noise, outlier ratio, planar,
+    small baseline, far origin, each camera model).
 
-- [ ] **M1 — First poses from our own code** (CPU, C++)
+- [x] **M1 — First poses from our own code** (CPU, C++)
   - C API, batches, counter-based sampler, P3P, 5-point, round-based LO-RANSAC, refinement, six camera models.
   - `jpo relpose` and `jpo pnp` on problem files; tests of each solver against PoseLib's on the same samples.
   - The float build of the same code, and the precision measurement above.
   - **Exit:** on the M0 sets, accuracy and success rate within PoseLib's own seed-to-seed spread, in double.
     A written decision on float32 minimal solvers (keep, or fall back to host solves).
+  - **Done.** Solvers against PoseLib's on the same samples (`parity_test`): 5-point reproduces 22105 of
+    PoseLib's 22119 exact solutions, P3P 10103 of 10111. Success rate within PoseLib's seed spread on every
+    set (largest shortfall of the mean below PoseLib's worst seed: 0.1 %). **Short of the exit on one set:**
+    on `relpose_harder` (20 % inliers, 1 px noise) the success rate is equal (89.0 % against 89.1 %) but the
+    poses are less accurate, AUC@5 0.739 against 0.788 (PoseLib's seeds: 0.759 to 0.821); `relpose_planar`
+    is 0.795 against 0.817. Not yet explained; the likely place is the local optimization, which PoseLib
+    runs on every new best model and this code runs once per round.
+  - **Float32 decision: keep the minimal solvers in float on the GPU.** The float build reproduces about
+    92 % of the double 5-point solutions and the estimator solves the same problems (`precision_test`:
+    100/100 at 70 % and 30 % inliers in both, 11 against 12 of 100 at 10 %); on `relpose_harder` float
+    costs 2 points of success rate (87.0 % against 89.0 %). No host-side double solves.
 
-- [ ] **M2 — Enough for an incremental reconstruction** (CPU, with just-ba)
+- [x] **M2 — Enough for an incremental reconstruction** (CPU, with just-ba)
   - A test program, not a product: pair verification, first pair, registration by PnP, just-ba's
     triangulation and solver, on two or three small scenes from exported COLMAP matches.
   - Compared with COLMAP on the same matches: images registered, reprojection error, pose error after alignment.
   - **Exit:** scenes reconstruct; any function found missing is added to the scope here, before it has to be
     written four times. Decides G1-G3 and whether homography comes back.
+  - **Done on generated scenes, not against COLMAP.** `tests/incremental` (built when just-ba is next to
+    the repository) reconstructs three scenes (orbit, wall, grid) from generated matches with outliers and
+    non-overlapping pairs: all images registered (16/16, 14/14, 13/13), mean reprojection 0.46 to 0.51 px,
+    median rotation error 0.04 to 0.06 deg, camera centres within 0.03 % of the scene extent.
+  - **No function was missing.** Homography does not come back: planar scenes reconstruct with the
+    5-point solver, and a first pair with too little parallax shows in `median_tri_angle_deg`. Two findings
+    went into `jpo.h`: `JPO_OK` is not "verified" (the caller thresholds `n_inliers`), and the mask of a
+    `JPO_DEGENERATE` pair is still usable for tracks. G1 to G3 stay candidates; nothing in M2 needed them.
 
-- [ ] **M3 — Runs on the Mac GPU, and is judged there** (Metal, M5 laptop)
+- [x] **M3 — Runs on the Mac GPU, and is judged there** (Metal, M5 laptop)
   - The CPU backend made as fast as it should be first (threads over problems, early stopping, no
     allocations per round), timed against PoseLib. This is the number to beat.
   - The Metal round for both estimators: 2048 hypotheses per problem, solve + score + select in one
@@ -233,27 +263,52 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
   - **Exit:** M0 metrics as M1 on Metal; the table of where Metal wins and by how much; the rule `auto`
     uses, taken from that table. A path that wins nowhere after tuning is removed, and what was tried is
     written down.
+  - **Done.** CPU first: 1 to 2 times PoseLib's speed on batches of pairs and 0.7 to 3.7 times on
+    resections (slower only on small resections that run to the iteration limit; RESULTS.md). Metal passes `backend_test` against the float CPU build (the same best
+    hypothesis in every round checked) and the accuracy sets (RESULTS.md).
+  - **Verdict.** Metal wins on batches that the CPU cannot stop early on: pairs at 30 % inliers or less
+    1.5 to 2.7 times, resections at 10 % or none 2.8 to 7.8 times. It loses on easy problems (0.2 to 0.6
+    times) and loses or ties on any single problem (a round costs 2 to 5 ms; 18 threads finish 10,000 hypotheses of one
+    pair in 2 ms). Both paths are kept; `auto` matches the CPU where the GPU loses and stays within 3 to
+    35 % of Metal where it wins.
+  - Tuning that paid: early rejection after the first 64 to 256 points, a bound from the best score so
+    far, a start offset per hypothesis, one thread per hypothesis. `ops_test` per kernel was not written:
+    the kernels are one source for CPU and Metal, so `backend_test` compares rounds instead.
 
-- [ ] **M4 — Runs on NVIDIA** (CUDA, the laptop)
+- [x] **M4 — Runs on NVIDIA** (CUDA, the laptop)
   - The paths that won on Metal, from the same kernel source behind the CUDA prelude; same tests; the same
     table on that machine, with its own `auto` rule (a discrete GPU pays for upload and readback that Metal
     does not).
   - CPU backend built and tested on Linux and Windows.
   - **Exit:** as M3 with `--backend cuda`.
+  - **Done on Linux.** Same kernel source through nvcc; `backend_test cuda` passes. RTX 2070 Max-Q against
+    a 6-core i7-9750H: pairs at 30 % or less 6 to 9 times on batches and about 2 times on one pair;
+    resections at 10 % or none 6 to 17 times; easy problems 0.4 to 0.8 times. Its own `auto` rule (below).
+    **Not done:** Windows. The CPU build and tests are in the CI matrix for Windows but that workflow has
+    never run (nothing was pushed), and CUDA on Windows was not tried.
 
-- [ ] **M5 — Fast**
+- [x] **M5 — Fast**
   - Tuning on both machines where the profiles point: rounds for problems of very different sizes in one
     batch, device inputs from just-matching, less waste on easy problems.
   - Benchmark table: problems per second by batch size, points and inlier ratio, for PoseLib on all
     threads, our CPU backend, Metal and CUDA.
   - **Exit:** documented numbers and the final `auto` rule per backend.
+  - **Done, with less tuning than planned.** Tables for PoseLib, CPU, Metal and CUDA in RESULTS.md, and the
+    `auto` rule per backend below. Device inputs were not added (no copy showed in a profile). Known gap in
+    `auto`: resections of 200 points at 30 % inliers stop near 1000 iterations, under the rule's threshold, so `auto`
+    stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches.
 
-- [ ] **M6 — Runs in the browser**
+- [x] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
   - WGSL port of the paths that won, natively through Dawn with the same tests, then Emscripten; device
     supplied by the caller. Measured against the WebAssembly CPU backend in Chrome, with its own `auto` rule.
   - **Exit:** `web/test.html` reproduces the native CPU results on the test sets; timings natively and in
     Chrome.
+  - **Done.** The WebAssembly CPU build reproduces `jpo webcheck --threads 1` exactly and runs about 1.35
+    times slower than one native thread. The WGSL port (hand-written, 1600 lines) passes `backend_test
+    webgpu` natively through Dawn, including with a device supplied by the caller, and runs in the browser
+    through Emscripten: 20 to 40 times faster than the WebAssembly CPU on hard sets (`auto` 13 to 20 times), about equal on easy
+    ones (RESULTS.md). Browser timings come from one run in one Chromium; Safari and Firefox were not run.
 
 - [ ] **M7 — Public docs and demo** (Cloudflare Pages)
   - Site: build, quick start, concepts (rounds, precision, conventions), C API, accuracy and speed, in the
@@ -269,6 +324,49 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     the benchmark numbers.
   - A link test: one WebAssembly module and one native binary holding just-keypoints, just-matching,
     poselib-gpu and just-ba on one GPU device.
+
+## Results
+
+Full tables: [RESULTS.md](RESULTS.md).
+
+### The auto rule
+
+`auto` starts every problem on the CPU. A problem that has drawn `cpu_iterations` hypotheses and still needs
+at least `gpu_min_remaining` more becomes a candidate; the candidates move to the GPU together once they
+need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
+
+| Backend | Measured on | cpu_iterations | gpu_min_remaining | gpu_min_total |
+|---|---|---|---|---|
+| Metal | M5 Pro, 18 threads | 256 | 1024 | 50,000 |
+| CUDA | RTX 2070 Max-Q, i7-9750H | 256 | 1024 | 5,000 |
+| WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
+| WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
+
+The numbers belong to those machines. Another CPU/GPU pair would want its own; nothing calibrates at run time.
+
+### What changed while building
+
+- **Iterations, not rounds, in the options and results.** They mean what they mean in PoseLib on every backend.
+- **Hypotheses are scored as poses with a cheirality test**, not as essential matrices (PoseLib's
+  behaviour). Scoring E alone lost planar scenes.
+- **Two Gauss-Newton steps polish each 5-point solution** on the eliminated constraints; without them the
+  solver was less exact than PoseLib's, in float visibly so.
+- **Early rejection and a score bound** in the round (M3), which is where most of the GPU's margin came from.
+- **CPU rounds double from 32 to 1024 hypotheses** instead of staying small: waking the thread pool for
+  tiny rounds made the first CPU version half as fast as PoseLib.
+- **Fused multiply-add is left on** (15 to 25 % faster on Apple silicon), so backends agree on the best
+  hypothesis except at near ties and tests compare that way, not bit for bit.
+- **Relative pose of fisheye pairs is scored with Sampson error on the normalized plane**, as PoseLib.
+  Both lose inliers there (inlier IoU 0.79 on the fisheye set against 0.95 elsewhere); scoring on bearings
+  is still an open question.
+- **`DEGENERATE`** is reported when the median triangulation angle of the inliers is under ten thresholds.
+
+### Not done, or not verified
+
+- Real images, real matches and the comparison with COLMAP (M0, M2): nothing to run them on here.
+- The accuracy shortfall on the hardest relative-pose set (M1).
+- Windows, and the hosted CI workflow, have never run.
+- Browsers other than one Chromium; the browser timings are a single run.
 
 ## Development machines
 
@@ -291,6 +389,7 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
 - Name and prefix (`jpo` is a placeholder).
 - Licence of this repository (PoseLib's BSD-3-Clause applies to the ported parts either way).
 - Whether Sampson error on normalized coordinates is enough for fisheye pairs, or relative pose should be
-  scored on bearings (angular error), as just-ba does for triangulation.
+  scored on bearings (angular error), as just-ba does for triangulation. Measured: it costs inliers.
+- Whether "line relative pose estimation" in the request meant line features (left out, see above).
 - Whether the first-pair choice should live here (a function over the batch of relative results) or in the
   final project.

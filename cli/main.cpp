@@ -5,6 +5,8 @@
 //   jpo run file.jpop [--backend cpu|metal|cuda|webgpu|auto] [--float] [--threads n] [--seed s]
 //                     [--max-error px] [--confidence c] [--min-iter n] [--max-iter n] [--no-refine]
 //                     [--repeat r] [-o results.txt] [--quiet]
+//   jpo bench ...                      (cli/bench.cpp)
+//   jpo webcheck [--backend b]         the sets of web/test.html, to compare the browser with native
 //   jpo backends
 #include <algorithm>
 #include <chrono>
@@ -191,6 +193,73 @@ int cmd_run(const Args& a) {
   return 0;
 }
 
+// The sets of web/test.html, with the same summary columns, to compare the browser with native.
+int cmd_webcheck(const Args& a) {
+  struct Set {
+    const char* name;
+    uint32_t kind, count, points;
+    double inliers, noise;
+    uint64_t seed;
+  };
+  const Set sets[] = {{"relpose easy", 0, 20, 1000, 0.7, 0.5, 201}, {"relpose hard", 0, 20, 1000, 0.3, 0.5, 202},
+                      {"relpose none", 0, 20, 300, 0.0, 0.5, 203},  {"pnp easy", 1, 20, 1000, 0.7, 1.0, 204},
+                      {"pnp hard", 1, 20, 1000, 0.1, 1.0, 205},     {"pnp none", 1, 20, 300, 0.0, 1.0, 206}};
+  jpo_config cfg;
+  jpo_config_init(&cfg);
+  cfg.backend = backend_from_name(a.str("--backend", "cpu"));
+  cfg.threads = static_cast<int32_t>(a.num("--threads", 0));
+  jpo_ctx* ctx = jpo_create(&cfg);
+  if (!ctx) {
+    std::fprintf(stderr, "jpo_create: %s\n", jpo_last_error());
+    return 1;
+  }
+  std::printf("| set | backend | solved | median error (deg) | mean iterations | ms |\n|---|---|---|---|---|---|\n");
+  for (const Set& s : sets) {
+    jposynth::Spec spec;
+    spec.kind = s.kind;
+    spec.count = s.count;
+    spec.points = s.points;
+    spec.inlier_ratio = s.inliers;
+    spec.noise_px = s.noise;
+    spec.seed = s.seed;
+    const jpofile::ProblemSet set = jposynth::make_set(spec);
+    const jpofile::Flat flat = jpofile::flatten(set);
+    std::vector<jpo_pose_result> res(s.count);
+    double best = 1e300;
+    for (int r = 0; r < 3; ++r) {
+      const auto t0 = std::chrono::steady_clock::now();
+      if (s.kind == 0) {
+        const jpo_pairs p = flat.pairs();
+        jpo_relative_pose(ctx, &p, nullptr, res.data(), nullptr);
+      } else {
+        const jpo_resections q = flat.resections();
+        jpo_absolute_pose(ctx, &q, nullptr, res.data(), nullptr);
+      }
+      best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    }
+    std::vector<double> errs;
+    int solved = 0;
+    double iters = 0.0;
+    for (uint32_t i = 0; i < s.count; ++i) {
+      iters += res[i].iterations;
+      if (!std::isfinite(set.problems[i].gt_pose[0])) {
+        solved += res[i].n_inliers <= 30 ? 1 : 0;
+        continue;
+      }
+      double rot = 180.0, tr = 180.0;
+      if (res[i].status == JPO_OK) jposynth::pose_errors(s.kind, res[i].pose, set.problems[i].gt_pose, &rot, &tr);
+      const double e = s.kind == 0 ? std::max(rot, tr) : rot;
+      errs.push_back(e);
+      solved += e < (s.kind == 0 ? 5.0 : 1.0) ? 1 : 0;
+    }
+    std::sort(errs.begin(), errs.end());
+    std::printf("| %s | %s | %d/%u | %.4f | %.0f | %.1f |\n", s.name, jpo_backend_name(ctx), solved, s.count,
+                errs.empty() ? std::nan("") : errs[errs.size() / 2], iters / s.count, best * 1e3);
+  }
+  jpo_destroy(ctx);
+  return 0;
+}
+
 }  // namespace
 
 int cmd_bench(int argc, char** argv);
@@ -201,6 +270,7 @@ int main(int argc, char** argv) {
     if (cmd == "gen") return cmd_gen(parse(argc, argv, 2));
     if (cmd == "run") return cmd_run(parse(argc, argv, 2));
     if (cmd == "bench") return cmd_bench(argc, argv);
+    if (cmd == "webcheck") return cmd_webcheck(parse(argc, argv, 2));
     if (cmd == "backends") {
       const char* names[] = {"auto", "cpu", "metal", "cuda", "webgpu"};
       for (int b = 1; b <= 4; ++b)

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "wasm-cpu",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "build/wasm-cpu/web"],
+      "port": 8765
+    },
+    {
+      "name": "wasm",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8766", "--directory", "build/wasm/web"],
+      "port": 8766
+    }
+  ]
+}
