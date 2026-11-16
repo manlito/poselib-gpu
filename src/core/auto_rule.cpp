@@ -17,10 +17,12 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
   route->one_round_gpu_min_total = 0;
   switch (gpu_backend) {
     case JPO_BACKEND_METAL:
-      // M5 Pro, 18 threads: a GPU round costs about what the CPU needs for 50,000 hypotheses, and
-      // problems that stop within about a thousand iterations are faster where they are.
-      route->cpu_iterations = 256;
-      route->gpu_min_remaining = 1024;
+      // M5 Pro, 18 threads: a GPU round costs about what the CPU needs for 50,000 hypotheses. A CPU phase
+      // of 128 with 512 remaining (since the phase stopped cutting rounds it need not, core/estimator.cpp)
+      // moves resection batches at 30 % inliers, which stop near 1000 iterations, and hard batches earlier.
+      // A lower total helped small resection batches but slowed small pair batches; it stays.
+      route->cpu_iterations = 128;
+      route->gpu_min_remaining = 512;
       route->gpu_min_total = 50000;
       // A budget that fits in one GPU round (min_inlier_ratio = 0.25 on resections: 585 iterations):
       // one dispatch of what is left after 64 CPU iterations beats the CPU once it is 5,000 hypotheses

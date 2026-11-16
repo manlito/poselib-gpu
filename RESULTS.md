@@ -10,6 +10,9 @@ Reproduce: `python3 tools/bench.py --backends cpu,metal,auto`, `python3 tools/ac
 
 ## Apple M5 Pro (18 threads), Metal
 
+The `auto` column is the rule as measured for M5 (256-iteration CPU phase, 1024 remaining); the current
+rule is in "CPU phase of 128 and 512 remaining on Metal" below.
+
 | kind | batch | points | inliers | poselib ms | cpu ms | metal ms | auto ms |
 |---|---|---|---|---|---|---|---|
 | relpose | 1 | 200 | 0.7 | 0.91 | 0.33 | 1.99 | 0.31 |
@@ -231,7 +234,7 @@ first change, D phase 128 with both (the current rule); selected cells, ms:
   against 321 (CUDA alone 136), 3000 x 2000 at 10 % 4171 against 4852.
 - `jpo candidates`: with the option on, unchanged within 3 %; with it off, 5 to 12 % faster (failing
   candidates move after 128 iterations).
-- Metal keeps its numbers. There the first change touches only batches of 1 and 2 (an 18-thread first round
+- On Metal the first change touches only batches of 1 and 2 (an 18-thread first round
   is 576 and 288 hypotheses), which never reach the GPU under Metal's rule; easy problems draw 576
   hypotheses instead of 256. Old against new binary, best of two runs of five, batches 1 to 3 (M5 Pro):
   geometric mean 0.996, every cell within 0.1 ms but one (a single hard resection of 2000 points, 2.18
@@ -241,7 +244,8 @@ first change, D phase 128 with both (the current rule); selected cells, ms:
 
 Natively through Dawn on the M5 Pro the WebGPU backend costs what Metal costs (300 pairs of 200 matches with
 no model: 211 ms against 197 ms for Metal and 500 ms for the CPU; 300 resections of 2000 points: 216 ms
-against 224 ms and 1282 ms), so natively it follows Metal's rule.
+against 224 ms and 1282 ms), so natively it follows Metal's rule as it was measured for M5 (256-iteration
+CPU phase, 1024 remaining); the later 128 / 512 change on Metal was not measured on WebGPU.
 
 In the browser (the app's built-in Chromium on the M5 Pro, WebAssembly on one thread, `web/test.html`,
 20 problems per set, best of three, ms):
@@ -394,6 +398,51 @@ What was tried and dropped, measured on the same sets:
 - A 32-iteration phase for one-round budgets: about the same at K = 32, slower at K = 16 (0.84 against
   0.77 ms with no failing candidate, 1.58 against 1.46 at 50 %).
 - No short-phase gate: 0.05 to 0.15 ms slower on K = 8 rounds that never reach the GPU.
+
+### CPU phase of 128 and 512 remaining on Metal
+
+With the phase no longer cutting rounds it need not ("CPU phase of 128 on CUDA" below), the shorter phase
+that was dropped on Metal ("`auto` with a one-round budget", above) was searched again with `jpo bench
+--backends auto --batches 1,2,4,8,32,300,3000` and the rule overrides: CPU phases of 64, 128 and 256 with
+256, 512 and 1024 remaining, total 50,000. With the 256 phase, 256 or 512 remaining re-route only four
+cells (resection batches at 30 %), all faster; a 128 or 64 phase re-routes 44 to 46 (every hard batch of 8
+or more). Batches of 1 and 2 are untouched by any of them: their first CPU round (576 and 288) is longer
+than the phase. Metal now uses a 128-iteration phase and 512 remaining, as CUDA.
+
+Confirmed in one window, best of two runs each, the second run in reverse order; cpu and metal from a full
+grid run before it; selected cells, ms:
+
+| kind | batch | points | inliers | cpu | metal | auto, 256 / 1024 | auto, 128 / 512 |
+|---|---|---|---|---|---|---|---|
+| relpose | 4 | 2000 | 0.7 | 1.18 | 4.66 | 1.16 | 1.42 |
+| relpose | 8 | 200 | 0.7 | 0.80 | 2.93 | 0.78 | 0.90 |
+| relpose | 32 | 200 | 0 | 54.65 | 32.51 | 33.84 | 32.41 |
+| relpose | 3000 | 200 | 0.1 | 5381.31 | 1944.65 | 2027.44 | 1988.93 |
+| pnp | 8 | 200 | 0.1 | 4.17 | 3.45 | 3.56 | 4.30 |
+| pnp | 8 | 2000 | 0.1 | 12.73 | 6.29 | 8.54 | 7.51 |
+| pnp | 32 | 200 | 0.3 | 2.64 | 1.21 | 2.78 | 2.64 |
+| pnp | 300 | 200 | 0.3 | 14.16 | 5.61 | 14.75 | 5.64 |
+| pnp | 300 | 2000 | 0.3 | 32.57 | 52.76 | 33.54 | 24.77 |
+| pnp | 300 | 2000 | 0.1 | 344.92 | 87.54 | 108.69 | 99.87 |
+| pnp | 3000 | 200 | 0.3 | 144.49 | 46.19 | 144.56 | 44.88 |
+| pnp | 3000 | 2000 | 0.3 | 330.84 | 504.37 | 329.58 | 218.79 |
+| pnp | 3000 | 2000 | 0.1 | 3685.49 | 848.01 | 1072.55 | 971.87 |
+
+- The 46 re-routed cells are 9 % faster (geometric mean), solved counts the same in all 112. The known gap
+  is closed for batches of 300 and more: 200-point resections at 30 % run at Metal alone's speed (3000 of
+  them: 145 → 45 ms), and 2000-point ones beat both the CPU and Metal alone (330 → 219 ms).
+- The 66 cells that route the same are 1.9 % slower, up to 0.26 ms on easy batches of 4 to 8 (4 x 2000
+  pairs at 70 %: 1.16 → 1.42 ms). With 512 remaining the phase cuts the round of any problem that still
+  needs 640 iterations, so one that has not found a good model by then pays for a round it would not have
+  under 1024. The worst re-routed cell is 8 x 200 resections at 10 %, 3.56 → 4.30 ms.
+- 32 resections of 200 points at 30 % still stay on the CPU (2.64 against 1.21 ms on Metal): together
+  they need under 50,000 hypotheses. A total of 20,000 moved them (1.20 ms) and 4 hard resections of 2000
+  points (8.3 → 5.3 ms), but slowed 4 pairs of 2000 points at 30 % (7.7 → 9.7 ms, where Metal alone is
+  slower than the CPU); 10,000 and 5,000 sent single and paired hard problems to Metal (1.8 → 5.2 ms). The
+  total stays at 50,000.
+- Also tried: a 64-iteration phase (1.5 % faster overall than 128, but 8 x 200 resections at 10 % 5.1 ms and
+  3000 x 2000 at 30 % 252 ms) and 256 remaining with the 128 phase (within noise of 512).
+- `jpo candidates` (old and new binary, interleaved): every cell within 7 %, with the option on or off.
 
 ## K candidates per registration round (RTX 2070 Max-Q, CUDA)
 

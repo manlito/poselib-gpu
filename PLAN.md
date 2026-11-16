@@ -299,8 +299,9 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     `auto`: resections of 200 points at 30 % inliers stop near 1000 iterations, under the rule's threshold, so `auto`
     stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches. On CUDA
     the threshold is now 512 with a 128-iteration CPU phase: those batches run 1.8 to 4.9 times faster,
-    1.5 to 1.6 times behind CUDA alone on 200 points and ahead of it on 2000; Metal keeps the gap (lowering its
-    threshold slowed other cells).
+    1.5 to 1.6 times behind CUDA alone on 200 points and ahead of it on 2000. Metal has the same rule
+    since: batches of 300 and more run at Metal alone's speed on 200 points (3000 of them: 145 → 45 ms)
+    and beat it on 2000; 32 of them still stay on the CPU (under the 50,000 total).
 
 - [x] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
@@ -341,7 +342,7 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 
 | Backend | Measured on | cpu_iterations | gpu_min_remaining | gpu_min_total |
 |---|---|---|---|---|
-| Metal | M5 Pro, 18 threads | 256 | 1024 | 50,000 |
+| Metal | M5 Pro, 18 threads | 128 | 512 | 50,000 |
 | CUDA | RTX 2070 Max-Q, i7-9750H | 128 | 512 | 5,000 |
 | WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
 | WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
@@ -404,7 +405,8 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - **The CPU phase of `auto` never ends inside the CPU's first round, and only cuts problems that could
   move.** Cutting the widened first round of a small batch left threads idle and cost easy problems a
   second round; a problem that cannot reach `gpu_min_remaining` keeps its whole round (routing unchanged).
-  This made a 128-iteration phase pay on CUDA (RESULTS.md, "CPU phase of 128 on CUDA").
+  This made a 128-iteration phase pay on CUDA and Metal (RESULTS.md, "CPU phase of 128 on CUDA", "CPU
+  phase of 128 and 512 remaining on Metal").
 - **Iterations, not rounds, in the options and results.** They mean what they mean in PoseLib on every backend.
 - **Hypotheses are scored as poses with a cheirality test**, not as essential matrices (PoseLib's
   behaviour). Scoring E alone lost planar scenes.
@@ -426,7 +428,8 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - The accuracy shortfall on the hardest relative-pose set (M1).
 - Windows, and the hosted CI workflow, have never run.
 - Browsers other than one Chromium; the browser timings are a single run.
-- WebGPU timings for `min_inlier_ratio`, and one-round numbers for WebGPU.
+- WebGPU timings for `min_inlier_ratio`, one-round numbers for WebGPU, and whether the 128 / 512 CPU phase
+  of Metal and CUDA also pays there (it keeps 256 / 1024).
 - `auto` with `min_inlier_ratio` set is still 0.15 to 0.5 ms per round behind Metal alone at K = 16 to 32
   with failing candidates (the 64-iteration CPU phase), and 0.1 to 0.9 ms behind CUDA alone (the
   16-iteration phase); on CUDA, rounds with no failing candidate at K = 16 to 32 are 0.3 to 0.6 ms behind
@@ -434,6 +437,10 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - On CUDA, single or paired easy problems of 2000 points are up to 0.3 ms slower than before the CPU phase
   lasted the CPU's first round (pnp 1 x 2000 at 70 %: 1.37 → 1.69 ms): that round is 384 hypotheses where
   an easy problem needs about 256.
+- On Metal, easy batches of 4 to 8 are up to 0.26 ms slower under the 128 / 512 rule (the phase cuts
+  problems that may still need 640 iterations), and 32 resections of 200 points at 30 % stay on the CPU,
+  2.2 times behind Metal alone: a lower total would move them but slows small pair batches, so the total
+  would have to depend on the kind of problem.
 
 ## Development machines
 
