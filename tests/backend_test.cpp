@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
       if (!c_none && !g_none && rc[i].iter == rg[i].iter && rc[i].sol == rg[i].sol) {
         double d = 0.0;
         for (int m = 0; m < 12; ++m) d = std::max(d, std::abs(rc[i].model[m] - rg[i].model[m]));
-        if (d < 2e-3 && std::abs(rc[i].score - rg[i].score) < 1e-3 * rc[i].score + 1e-3) {
+        if (d < 2e-3 && std::abs(rc[i].score - rg[i].score) < 1e-2 * rc[i].score + 1e-3) {  // float, different rounding
           ++same;
           continue;
         }

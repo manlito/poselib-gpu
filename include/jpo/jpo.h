@@ -56,6 +56,9 @@ typedef struct {
   void* webgpu_device;
 } jpo_config;
 
+/* Number of parameters of a camera model (3 .. 8), 0 for an unknown model. */
+int jpo_camera_param_count(int32_t model);
+
 void jpo_config_init(jpo_config* config);
 
 /* NULL on failure; jpo_last_error() says why. */
@@ -103,13 +106,18 @@ typedef struct {
   const uint32_t* camera;    /* n_images: index into cameras */
 } jpo_resections;
 
+/* JPO_OK only says that a model with more inliers than a minimal sample was found: random matches of
+ * images that do not overlap come back OK with a handful of inliers. Whether a pair or a registration
+ * is accepted is the caller's rule on n_inliers (for example at least 30 inliers and a quarter of the
+ * matches for a pair). */
 typedef enum {
   JPO_OK = 0,
   JPO_NO_MODEL = 1,        /* no hypothesis had more inliers than a minimal sample */
   JPO_TOO_FEW_POINTS = 2,  /* fewer points than a minimal sample (5 relative, 3 absolute) */
   JPO_DEGENERATE = 3       /* relative pose only: a pose was found but the baseline is not observable
                               (median triangulation angle below ten inlier thresholds, as in a pure
-                              rotation); the rotation is still usable, the translation is not */
+                              rotation); the rotation and the inlier mask are still usable (the
+                              matches can go into tracks), the translation is not */
 } jpo_status;
 
 typedef struct {

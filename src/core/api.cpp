@@ -79,6 +79,8 @@ Backend* ctx_gpu(jpo_ctx* ctx) { return ctx->gpu.get(); }
 
 extern "C" {
 
+int jpo_camera_param_count(int32_t model) { return jpo::camera_param_count(model); }
+
 void jpo_config_init(jpo_config* config) {
   if (!config) return;
   std::memset(config, 0, sizeof(*config));

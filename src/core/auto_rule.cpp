@@ -21,6 +21,13 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
       route->gpu_min_remaining = 1024;
       route->gpu_min_total = 50000;
       break;
+    case JPO_BACKEND_CUDA:
+      // RTX 2070 Max-Q against a 6-core i7-9750H: the GPU already wins on one hard problem, so the
+      // candidates move as soon as they need a few thousand hypotheses between them.
+      route->cpu_iterations = 256;
+      route->gpu_min_remaining = 1024;
+      route->gpu_min_total = 5000;
+      break;
     default:
       break;
   }
