@@ -4,8 +4,9 @@
 //                       [--planar] [--baseline b] [--rotation deg] [--world-offset d] [--seed s]
 //   jpo run file.jpop [--backend cpu|metal|cuda|webgpu|auto] [--float] [--threads n] [--seed s]
 //                     [--max-error px] [--confidence c] [--min-iter n] [--max-iter n] [--no-refine]
-//                     [--repeat r] [-o results.txt] [--quiet]
+//                     [--min-inlier-ratio r] [--repeat r] [-o results.txt] [--quiet]
 //   jpo bench ...                      (cli/bench.cpp)
+//   jpo candidates ...                 K candidate images per registration round (cli/bench.cpp)
 //   jpo webcheck [--backend b]         the sets of web/test.html, to compare the browser with native
 //   jpo backends
 #include <algorithm>
@@ -128,6 +129,9 @@ int cmd_run(const Args& a) {
   if (a.has("--cpu-iter")) jpo::ctx_route(ctx).cpu_iterations = static_cast<uint32_t>(a.num("--cpu-iter", 0));
   if (a.has("--gpu-min-remaining")) jpo::ctx_route(ctx).gpu_min_remaining = static_cast<uint32_t>(a.num("--gpu-min-remaining", 0));
   if (a.has("--gpu-min-total")) jpo::ctx_route(ctx).gpu_min_total = static_cast<uint64_t>(a.num("--gpu-min-total", 0));
+  if (a.has("--one-round-cpu-iter")) jpo::ctx_route(ctx).one_round_cpu_iterations = static_cast<uint32_t>(a.num("--one-round-cpu-iter", 0));
+  if (a.has("--one-round-gpu-min-remaining")) jpo::ctx_route(ctx).one_round_gpu_min_remaining = static_cast<uint32_t>(a.num("--one-round-gpu-min-remaining", 0));
+  if (a.has("--one-round-gpu-min-total")) jpo::ctx_route(ctx).one_round_gpu_min_total = static_cast<uint64_t>(a.num("--one-round-gpu-min-total", 0));
   jpo_ransac_options opt;
   jpo_ransac_options_init(&opt);
   opt.max_error_px = a.num("--max-error", set.kind == 0 ? 1.0 : 4.0);
@@ -135,6 +139,7 @@ int cmd_run(const Args& a) {
   opt.min_iterations = static_cast<uint32_t>(a.num("--min-iter", opt.min_iterations));
   opt.max_iterations = static_cast<uint32_t>(a.num("--max-iter", opt.max_iterations));
   opt.refine = a.has("--no-refine") ? 0 : 1;
+  opt.min_inlier_ratio = a.num("--min-inlier-ratio", 0.0);
 
   const size_t B = set.problems.size();
   std::vector<jpo_pose_result> results(B);
@@ -263,6 +268,7 @@ int cmd_webcheck(const Args& a) {
 }  // namespace
 
 int cmd_bench(int argc, char** argv);
+int cmd_candidates(int argc, char** argv);
 
 int main(int argc, char** argv) {
   try {
@@ -270,6 +276,7 @@ int main(int argc, char** argv) {
     if (cmd == "gen") return cmd_gen(parse(argc, argv, 2));
     if (cmd == "run") return cmd_run(parse(argc, argv, 2));
     if (cmd == "bench") return cmd_bench(argc, argv);
+    if (cmd == "candidates") return cmd_candidates(argc, argv);
     if (cmd == "webcheck") return cmd_webcheck(parse(argc, argv, 2));
     if (cmd == "backends") {
       const char* names[] = {"auto", "cpu", "metal", "cuda", "webgpu"};
@@ -277,7 +284,7 @@ int main(int argc, char** argv) {
         if (jpo_backend_available(b)) std::printf("%s\n", names[b]);
       return 0;
     }
-    std::fprintf(stderr, "usage: jpo gen|run|bench|backends ...  (see cli/main.cpp)\n");
+    std::fprintf(stderr, "usage: jpo gen|run|bench|candidates|webcheck|backends ...  (see cli/main.cpp)\n");
     return 2;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "jpo: %s\n", e.what());

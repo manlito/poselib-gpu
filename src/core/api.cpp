@@ -49,6 +49,8 @@ std::unique_ptr<jpo::Backend> make_gpu(int32_t backend, const jpo_config& cfg) {
 void check_options(const jpo_ransac_options& o) {
   if (!(o.max_error_px > 0.0)) throw std::invalid_argument("max_error_px must be positive");
   if (!(o.confidence > 0.0 && o.confidence < 1.0)) throw std::invalid_argument("confidence must be in (0, 1)");
+  if (!(o.min_inlier_ratio >= 0.0 && o.min_inlier_ratio < 1.0))
+    throw std::invalid_argument("min_inlier_ratio must be in [0, 1)");
 }
 
 void check_cameras(const jpo_camera* cams, uint32_t n) {

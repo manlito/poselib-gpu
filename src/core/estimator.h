@@ -21,6 +21,14 @@ struct Route {
   uint32_t cpu_iterations = 0;
   uint32_t gpu_min_remaining = 0;
   uint64_t gpu_min_total = 0;
+  // The same three numbers for a call whose iteration budget (max_iterations, or the cap that
+  // min_inlier_ratio sets) fits in one GPU round; 0 keeps the numbers above. Whatever moves then takes
+  // exactly one dispatch, while the numbers above were measured on problems that take several: a GPU
+  // round costs a fixed latency, so 24 resections that need 500 more hypotheses each are worth one
+  // dispatch where one that needs 10,000 (five rounds) is not, at about the same total.
+  uint32_t one_round_cpu_iterations = 0;
+  uint32_t one_round_gpu_min_remaining = 0;
+  uint64_t one_round_gpu_min_total = 0;
 };
 
 struct BatchStats {

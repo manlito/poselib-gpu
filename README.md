@@ -40,6 +40,28 @@ holds the median triangulation angle of its inliers, which is what the choice of
 are COLMAP's models `SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`, `OPENCV` and `OPENCV_FISHEYE`.
 See [include/jpo/jpo.h](include/jpo/jpo.h).
 
+### Several candidate images per round
+
+An incremental reconstruction can try K candidate images in one `jpo_absolute_pose` call and register
+every one whose result passes its own test on `n_inliers`. Set `min_inlier_ratio` so that candidates that
+cannot pass give up early instead of running to `max_iterations`:
+
+```c
+jpo_ransac_options opt;
+jpo_ransac_options_init(&opt);     /* min_inlier_ratio = 0: off */
+opt.max_error_px = 4.0;
+opt.min_inlier_ratio = 0.25;       /* at most log(1 - confidence) / log(1 - 0.25^3) = 585 iterations */
+jpo_absolute_pose(ctx, &candidates, &opt, results, inliers);
+/* a stopped candidate still returns its best model and real inlier count: compare n_inliers */
+```
+
+A problem with at least that inlier ratio has drawn an all-inlier sample with the requested confidence by
+then. On the M5 Pro a round of 8 to 32 candidates with a quarter to three quarters failing runs 3.7 to 10
+times faster than without the option, with every good candidate still solved, and `auto` sends the
+failing candidates of rounds of 16 or more to Metal when that is faster (RESULTS.md). The option also
+applies to `jpo_relative_pose`, but with five-point samples the cap is near 10,000 anyway, so leave it at 0
+for pairs. CLI: `--min-inlier-ratio r` for `jpo run` and `jpo bench`; JavaScript: `minInlierRatio`.
+
 ## Backends
 
 | Backend | Where | Notes |
@@ -86,6 +108,7 @@ cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, 
 jpo gen relpose -o pairs.jpop --count 200 --points 1000 --inliers 0.3     # generated problems
 jpo run pairs.jpop --backend auto -o results.txt                          # poses, masks, accuracy
 jpo bench --backends cpu,metal,auto                                       # the timing grid
+jpo candidates --k 8,16,32 --failing 0.25,0.5,0.75 --ratio 0.25           # K-candidate rounds
 python3 tools/accuracy.py        # the accuracy sets, PoseLib against itself and against jpo
 python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with PoseLib alongside
 ```

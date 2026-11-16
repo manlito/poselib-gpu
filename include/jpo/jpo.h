@@ -79,6 +79,14 @@ typedef struct {
   uint32_t max_iterations; /* default 10000 */
   int32_t refine;          /* non-linear refinement of the result (default 1) */
   int32_t reserved;
+  /* Give up on a problem whose inlier ratio is below this, in [0, 1); 0 = off (default). When set, a
+   * problem draws at most log(1 - confidence) / log(1 - r^s) iterations (s = 3 absolute, 5 relative),
+   * clamped to [min_iterations, max_iterations]: by then a problem with at least that ratio has drawn
+   * an all-inlier sample with the requested confidence. A problem stopped this way returns the best
+   * model it found with its real inlier count and status; the caller compares n_inliers. Meant for
+   * many candidate images registered in one call, where those that cannot pass would otherwise run
+   * to max_iterations. A problem just above the ratio may stop before its own stopping rule would. */
+  double min_inlier_ratio;
 } jpo_ransac_options;
 
 void jpo_ransac_options_init(jpo_ransac_options* options);

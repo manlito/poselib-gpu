@@ -28,7 +28,7 @@ EMSCRIPTEN_KEEPALIVE jpo_ctx* jpow_create(int backend, uint32_t seed, void* inst
 EMSCRIPTEN_KEEPALIVE void jpow_destroy(jpo_ctx* ctx) { jpo_destroy(ctx); }
 
 // cameras: 9 doubles each (model, then 8 parameters). options: max_error_px, confidence,
-// min_iterations, max_iterations, refine. results: 12 doubles per problem (pose 7, score,
+// min_iterations, max_iterations, refine, min_inlier_ratio. results: 12 doubles per problem (pose 7, score,
 // median_tri_angle_deg, n_inliers, iterations, status).
 static void unpack(const double* cameras, uint32_t n, std::vector<jpo_camera>* out) {
   out->resize(n);
@@ -46,6 +46,7 @@ static jpo_ransac_options options(const double* o) {
   opt.min_iterations = static_cast<uint32_t>(o[2]);
   opt.max_iterations = static_cast<uint32_t>(o[3]);
   opt.refine = o[4] != 0.0;
+  opt.min_inlier_ratio = o[5];
   return opt;
 }
 static void pack(const std::vector<jpo_pose_result>& res, double* out) {

@@ -4,6 +4,7 @@
 //   const module = await createJpoModule();
 //   const jpo = await Jpo.create(module, { backend: BACKEND.AUTO });
 //   const out = await jpo.relativePose({ offsets, xyA, xyB, cameras, cameraA, cameraB }, { maxErrorPx: 1 });
+//   // options: maxErrorPx, confidence, minIterations, maxIterations, refine, minInlierRatio (0 = off)
 //   // out.results[i] = { pose (Float64Array 7), score, medianTriAngleDeg, nInliers, iterations, status }
 //   // out.inliers: Uint8Array, one byte per match
 //
@@ -48,7 +49,7 @@ export class Jpo {
     return this.#run(1, { offsets: problem.offsets, xyA: problem.xy, xyB: problem.xyz, cameras: problem.cameras, cameraA: problem.camera }, options);
   }
 
-  async #run(kind, p, { maxErrorPx = kind === 0 ? 1 : 4, confidence = 0.9999, minIterations = 100, maxIterations = 10000, refine = true } = {}) {
+  async #run(kind, p, { maxErrorPx = kind === 0 ? 1 : 4, confidence = 0.9999, minIterations = 100, maxIterations = 10000, refine = true, minInlierRatio = 0 } = {}) {
     const m = this.m;
     const count = p.offsets.length - 1;
     const total = p.offsets[count];
@@ -71,7 +72,7 @@ export class Jpo {
       const b = put(p.xyB, Float64Array);
       const cameras = put(cams, Float64Array);
       const cameraA = put(p.cameraA, Uint32Array);
-      const opts = put([maxErrorPx, confidence, minIterations, maxIterations, refine ? 1 : 0], Float64Array);
+      const opts = put([maxErrorPx, confidence, minIterations, maxIterations, refine ? 1 : 0, minInlierRatio], Float64Array);
       const results = m._malloc(Math.max(8, 96 * count));
       const inliers = m._malloc(Math.max(8, total));
       allocs.push(results, inliers);

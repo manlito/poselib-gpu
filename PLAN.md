@@ -137,7 +137,8 @@ void jpo_destroy(jpo_ctx*);
 - Inputs name a camera per image (`model`, intrinsics as doubles), shared across problems where equal.
 - `jpo_ransac_options`: `max_error_px` (default 1 for pairs, 4 for resections), `confidence` (0.9999),
   `min_iterations` (100), `max_iterations` (10000), `refine` (on by default). Iterations, not rounds: the
-  numbers mean what they mean in PoseLib, on every backend.
+  numbers mean what they mean in PoseLib, on every backend. `min_inlier_ratio` (off by default, added
+  after M6) gives up on problems below a given inlier ratio; see "K candidates per round" below.
 - Results per problem, one struct for both estimators: pose (7 doubles), `n_inliers`, `score` (MSAC),
   `iterations`, `status`, and `median_tri_angle_deg` (relative pose; 0 otherwise); per point an inlier byte.
 - Host buffers only. Device buffers as input were to be added only if the copy showed up in a profile; it
@@ -342,7 +343,50 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 | WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
 | WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
 
+A call whose iteration budget fits in one GPU round (`max_iterations`, or the cap of `min_inlier_ratio`,
+at most 2048; resections at r = 0.25 draw at most 585) has its own three numbers, because whatever moves then
+takes exactly one dispatch, while the numbers above were measured on problems that take several. They are
+used only when the batch could reach the total at all (active problems x (budget − CPU phase) ≥ the total);
+otherwise, and on backends without them, the numbers above apply.
+
+| Backend | one-round cpu_iterations | gpu_min_remaining | gpu_min_total |
+|---|---|---|---|
+| Metal | 64 | 256 | 5,000 |
+| CUDA, WebGPU | not measured: the numbers above | | |
+
 The numbers belong to those machines. Another CPU/GPU pair would want its own; nothing calibrates at run time.
+
+### K candidates per round: min_inlier_ratio
+
+The incremental reconstruction this library is for registers images in rounds: K candidate images go to
+`jpo_absolute_pose` as one batch, and every one that passes the caller's test is registered. The batch
+call already did that; what it lacked was a cheap way to give up on candidates that cannot pass, which ran
+to `max_iterations` (10,000) and made up nearly all the time of a round.
+
+- `jpo_ransac_options.min_inlier_ratio` = r, in [0, 1); 0 is off and is what `jpo_ransac_options_init`
+  gives. When set, every problem of the call draws at most log(1 - confidence) / log(1 - r^s) iterations
+  (s = 3 absolute, 5 relative), clamped to [min_iterations, max_iterations]: 585 for resections at r = 0.25
+  and the default confidence, 9427 for pairs, where it saves almost nothing, so callers leave it at 0 there.
+- It is one rule in the host driver (`src/core/estimator.cpp`, `iteration_cap`), so every backend has it
+  without kernel changes. The cap replaces `max_iterations` everywhere the driver uses it: the stopping
+  rule, the remaining work `auto` counts before moving a problem to the GPU, and the early rejection floor.
+- A problem stopped by the cap returns the best model it found with its real inlier count and the usual
+  status. There is no status code for it; the caller compares `n_inliers`, as it already does.
+- A problem just above r may stop before its own stopping rule would (that rule asks three times the
+  bound). Problems well above r stop by their own rule first and come back unchanged (`core_test`).
+- Measured (RESULTS.md, "K candidates per registration round"): K = 8 to 32 resections with a quarter to
+  three quarters failing, 4 to 10 times faster per round on the CPU and 4 to 6 times on Metal, with every
+  good candidate still solved. One batch is 1.5 to 5.7 times faster than K calls on the CPU.
+- Under the old `auto` rule these capped rounds never left the CPU (329 iterations left per candidate after
+  the 256-iteration CPU phase, under `gpu_min_remaining`), where Metal alone was up to 2 times faster. The
+  one-round numbers above fix most of that: K = 32 with three quarters failing 2.96 → 1.97 ms (Metal alone
+  1.50, CPU 3.02), with `auto` within noise of the CPU or faster elsewhere. Calls with the default budget
+  route exactly as before (all 112 cells of the grid checked). Lowering the general thresholds instead was
+  tried and dropped: it closed the known gap on 200-point resections at 30 % but slowed single easy
+  problems and small hard batches (RESULTS.md, "`auto` with a one-round budget").
+- Left to the pipeline: ranking candidates, the acceptance threshold, building 2D-3D matches from tracks,
+  and stopping after N successes. World points are copied per candidate (under 1 MB per round); there is
+  no indexed form.
 
 ### What changed while building
 
@@ -367,6 +411,9 @@ The numbers belong to those machines. Another CPU/GPU pair would want its own; n
 - The accuracy shortfall on the hardest relative-pose set (M1).
 - Windows, and the hosted CI workflow, have never run.
 - Browsers other than one Chromium; the browser timings are a single run.
+- `min_inlier_ratio` on CUDA (built on the NVIDIA laptop, not run for this change) and WebGPU timings for it.
+- `auto` with `min_inlier_ratio` set is still 0.15 to 0.5 ms per round behind Metal alone at K = 16 to 32
+  with failing candidates (the 64-iteration CPU phase). One-round numbers for CUDA and WebGPU.
 
 ## Development machines
 

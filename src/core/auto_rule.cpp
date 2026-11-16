@@ -12,6 +12,9 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
   route->cpu_iterations = 0xffffffffu;  // never
   route->gpu_min_remaining = 0;
   route->gpu_min_total = 0;
+  route->one_round_cpu_iterations = 0;  // a one-round budget follows the numbers above
+  route->one_round_gpu_min_remaining = 0;
+  route->one_round_gpu_min_total = 0;
   switch (gpu_backend) {
     case JPO_BACKEND_METAL:
       // M5 Pro, 18 threads: a GPU round costs about what the CPU needs for 50,000 hypotheses, and
@@ -19,6 +22,12 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
       route->cpu_iterations = 256;
       route->gpu_min_remaining = 1024;
       route->gpu_min_total = 50000;
+      // A budget that fits in one GPU round (min_inlier_ratio = 0.25 on resections: 585 iterations):
+      // one dispatch of what is left after 64 CPU iterations beats the CPU once it is 5,000 hypotheses
+      // (K = 16 to 32 candidates, half or more failing); a short CPU phase still lets the good ones finish.
+      route->one_round_cpu_iterations = 64;
+      route->one_round_gpu_min_remaining = 256;
+      route->one_round_gpu_min_total = 5000;
       break;
     case JPO_BACKEND_CUDA:
       // RTX 2070 Max-Q against a 6-core i7-9750H: the GPU already wins on one hard problem, so the

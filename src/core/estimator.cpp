@@ -40,6 +40,20 @@ uint32_t dynamic_max_iter(size_t inliers, size_t n, int sample, double log_missi
   return std::max(min_it, static_cast<uint32_t>(it));
 }
 
+// The most iterations any problem of the call may draw. With min_inlier_ratio r set, a problem whose
+// inlier ratio is at least r has drawn an all-inlier sample with the requested confidence after
+// log(1 - confidence) / log(1 - r^s) iterations; one that is still running then is taken to be below r
+// and stops with what it has. Everything that follows (the stopping rule, the work `auto` counts
+// before moving a problem to the GPU, the early rejection floor) uses this cap as the budget.
+uint32_t iteration_cap(const jpo_ransac_options& opt, int sample, double log_missing) {
+  const uint32_t max_it = opt.max_iterations;
+  if (!(opt.min_inlier_ratio > 0.0)) return max_it;
+  const double p = std::pow(opt.min_inlier_ratio, sample);
+  const double it = std::ceil(log_missing / std::log1p(-p));
+  if (!(it < static_cast<double>(max_it))) return max_it;
+  return std::max(std::min(opt.min_iterations, max_it), static_cast<uint32_t>(it));
+}
+
 // The early rejection test of a round (kernels.inc, "Scores"): a hypothesis is scored on pre_k points
 // first and dropped if it has fewer than pre_min inliers there. With f the inlier ratio of the best
 // minimal model so far, a hypothesis as good as that one has about Binomial(pre_k, f) inliers in the
@@ -174,12 +188,27 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
   const int sample = kind_sample_size(kind);
   const double log_missing = std::log(std::max(1.0 - opt.confidence, 1e-300));
   const uint32_t min_it = std::min(opt.min_iterations, opt.max_iterations);
-  const uint32_t max_it = opt.max_iterations;
+  const uint32_t max_it = iteration_cap(opt, sample, log_missing);
   const double f_floor = std::pow(0.05 / std::max<double>(max_it, 1.0), 1.0 / sample);
   Backend* cpu = route.cpu;
   Backend* gpu = route.gpu;
   if (cpu) cpu->set_points(kind, pts.data(), n_points);
   bool gpu_has_points = false;
+  uint32_t cpu_iterations = route.cpu_iterations;
+  uint32_t gpu_min_remaining = route.gpu_min_remaining;
+  uint64_t gpu_min_total = route.gpu_min_total;
+  // The short CPU phase of a one-round budget costs a CPU round of its own, so it is only taken when
+  // the batch could reach the GPU at all: every problem still running after it would need
+  // one_round_gpu_min_total hypotheses between them.
+  size_t n_start = 0;
+  for (const State& st : states) n_start += st.active ? 1 : 0;
+  if (cpu && gpu && route.one_round_cpu_iterations > 0 && max_it <= gpu->round_size(1, 0) &&
+      max_it > route.one_round_cpu_iterations &&
+      static_cast<uint64_t>(n_start) * (max_it - route.one_round_cpu_iterations) >= route.one_round_gpu_min_total) {
+    cpu_iterations = route.one_round_cpu_iterations;
+    gpu_min_remaining = route.one_round_gpu_min_remaining;
+    gpu_min_total = route.one_round_gpu_min_total;
+  }
 
   std::vector<RoundItem> items[2];
   std::vector<RoundResult> results[2];
@@ -199,15 +228,15 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
     } else if (gpu) {
       uint64_t total = 0;
       for (const State& st : states) {
-        if (!st.active || st.on_gpu || st.iters < route.cpu_iterations) continue;
+        if (!st.active || st.on_gpu || st.iters < cpu_iterations) continue;
         const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
-        if (need - st.iters >= route.gpu_min_remaining) total += need - st.iters;
+        if (need - st.iters >= gpu_min_remaining) total += need - st.iters;
       }
-      if (total >= route.gpu_min_total && total > 0) {
+      if (total >= gpu_min_total && total > 0) {
         for (State& st : states) {
-          if (!st.active || st.on_gpu || st.iters < route.cpu_iterations) continue;
+          if (!st.active || st.on_gpu || st.iters < cpu_iterations) continue;
           const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
-          if (need - st.iters >= route.gpu_min_remaining) st.on_gpu = true;
+          if (need - st.iters >= gpu_min_remaining) st.on_gpu = true;
         }
       }
     }
@@ -219,7 +248,7 @@ void run_rounds(Kind kind, const Route& route, ThreadPool* pool, std::vector<Sta
       const int b = st.on_gpu ? 1 : 0;
       const uint32_t need = std::min(max_it, std::max(min_it, st.dyn_max) + 1);
       uint32_t count = std::min((b == 0 ? cpu : gpu)->round_size(count_b[b], st.iters), need - st.iters);
-      if (b == 0 && gpu && st.iters < route.cpu_iterations) count = std::min(count, route.cpu_iterations - st.iters);
+      if (b == 0 && gpu && st.iters < cpu_iterations) count = std::min(count, cpu_iterations - st.iters);
       RoundItem it;
       it.problem = static_cast<uint32_t>(i);
       it.first = st.first;

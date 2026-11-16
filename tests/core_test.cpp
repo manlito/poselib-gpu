@@ -253,10 +253,103 @@ static void test_estimators() {
   jpo_destroy(ctx);
 }
 
+static int solve(const jpofile::ProblemSet& set, jpo_ctx* ctx, const jpo_ransac_options* opt,
+                 std::vector<jpo_pose_result>* res, std::vector<uint8_t>* inl) {
+  const jpofile::Flat flat = jpofile::flatten(set);
+  res->assign(set.problems.size(), jpo_pose_result());
+  inl->assign(flat.offsets.back(), 0);
+  if (set.kind == 0) {
+    const jpo_pairs p = flat.pairs();
+    return jpo_relative_pose(ctx, &p, opt, res->data(), inl->data());
+  }
+  const jpo_resections r = flat.resections();
+  return jpo_absolute_pose(ctx, &r, opt, res->data(), inl->data());
+}
+
+// min_inlier_ratio: problems below it stop at log(1 - confidence) / log(1 - r^s) iterations with what
+// they found; problems above it stop by their own rule first and give the same pose as without it.
+static void test_min_inlier_ratio() {
+  jpo_config cfg;
+  jpo_config_init(&cfg);
+  cfg.backend = JPO_BACKEND_CPU;
+  jpo_ctx* ctx = jpo_create(&cfg);
+  const double ratio = 0.25;
+  for (uint32_t kind = 0; kind < 2; ++kind) {
+    jpo_ransac_options off;
+    jpo_ransac_options_init(&off);
+    off.max_error_px = kind == 0 ? 1.0 : 4.0;
+    jpo_ransac_options on = off;
+    on.min_inlier_ratio = ratio;
+    const int s = kind == 0 ? 5 : 3;
+    const uint32_t cap = static_cast<uint32_t>(std::ceil(std::log(1.0 - on.confidence) / std::log1p(-std::pow(ratio, s))));
+
+    // A batch as a round of candidates looks: good ones and ones with no model, mixed.
+    jposynth::Spec spec;
+    spec.kind = kind;
+    spec.count = 6;
+    spec.points = 500;
+    spec.noise_px = kind == 0 ? 0.5 : 1.0;
+    spec.seed = 71 + kind;
+    spec.inlier_ratio = 0.6;
+    jpofile::ProblemSet set = jposynth::make_set(spec);
+    spec.inlier_ratio = 0.0;
+    spec.seed += 10;
+    const jpofile::ProblemSet none = jposynth::make_set(spec);
+    set.problems.insert(set.problems.begin() + 3, none.problems.begin(), none.problems.end());
+
+    std::vector<jpo_pose_result> a, b;
+    std::vector<uint8_t> ma, mb;
+    CHECK(solve(set, ctx, &off, &a, &ma) == 0, "off: %s", jpo_last_error());
+    CHECK(solve(set, ctx, &on, &b, &mb) == 0, "on: %s", jpo_last_error());
+    const std::vector<uint32_t> offsets = jpofile::flatten(set).offsets;
+    int stopped = 0, same = 0;
+    for (size_t i = 0; i < set.problems.size(); ++i) {
+      const bool good = std::isfinite(set.problems[i].gt_pose[0]);
+      if (!good) {
+        stopped += b[i].iterations == cap ? 1 : 0;
+        CHECK(a[i].iterations == off.max_iterations, "kind %u: no model ran %u iterations without the option", kind,
+              a[i].iterations);
+        uint32_t count = 0;
+        for (uint32_t k = 0; k < set.problems[i].n(); ++k) count += mb[offsets[i] + k];
+        CHECK(count == b[i].n_inliers, "kind %u: capped problem mask %u, result %u", kind, count, b[i].n_inliers);
+        CHECK(b[i].n_inliers < ratio * set.problems[i].n(), "kind %u: capped problem has %u inliers", kind, b[i].n_inliers);
+      } else {
+        same += std::memcmp(a[i].pose, b[i].pose, sizeof(a[i].pose)) == 0 && a[i].n_inliers == b[i].n_inliers &&
+                        a[i].iterations == b[i].iterations && a[i].status == b[i].status
+                    ? 1
+                    : 0;
+      }
+    }
+    std::printf("min_inlier_ratio %.2f, %s: cap %u iterations, %d of 6 without a model stopped there, %d of 6 good "
+                "problems unchanged\n",
+                ratio, kind ? "pnp" : "relpose", cap, stopped, same);
+    CHECK(stopped == 6, "kind %u: %d of 6 problems without a model stopped at the cap", kind, stopped);
+    CHECK(same == 6, "kind %u: %d of 6 good problems gave the same result", kind, same);
+  }
+  // Out of range.
+  {
+    jposynth::Spec spec;
+    spec.kind = 1;
+    spec.count = 1;
+    spec.points = 50;
+    const jpofile::ProblemSet set = jposynth::make_set(spec);
+    std::vector<jpo_pose_result> r;
+    std::vector<uint8_t> m;
+    jpo_ransac_options o;
+    jpo_ransac_options_init(&o);
+    for (double bad : {-0.1, 1.0, 1.5, std::nan("")}) {
+      o.min_inlier_ratio = bad;
+      CHECK(solve(set, ctx, &o, &r, &m) != 0, "min_inlier_ratio %g accepted", bad);
+    }
+  }
+  jpo_destroy(ctx);
+}
+
 int main() {
   test_cameras();
   test_solvers();
   test_estimators();
+  test_min_inlier_ratio();
   if (g_fail) {
     std::printf("%d checks failed\n", g_fail);
     return 1;
