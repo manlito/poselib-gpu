@@ -34,8 +34,10 @@ jobs:
         run: tools/fetch_reference.sh
       - name: Configure
         run: cmake -S . -B build -DJPO_METAL=OFF -DJPO_CUDA=OFF -DJPO_WEBGPU=OFF
+      # A bare --parallel is an unbounded `make -j` with Makefiles: every PoseLib file compiles at once
+      # and the Ubuntu runner runs out of memory. Four jobs matches the hosted runners' cores.
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 4
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
