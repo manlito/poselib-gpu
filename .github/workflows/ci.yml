@@ -1,11 +1,9 @@
-# CPU tests and the WebAssembly build, on free hosted runners. GPU tests are run by hand on the
-# development machines (README.md, "Tests").
+# CPU tests and the WebAssembly build, on free hosted runners. Run by hand only (Actions tab,
+# "Run workflow", or `gh workflow run ci --ref <branch>`); pushes and pull requests do not trigger
+# it. GPU tests are run by hand on the development machines (README.md, "Tests").
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:

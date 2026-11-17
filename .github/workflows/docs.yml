@@ -1,0 +1,31 @@
+# The one automatic workflow: checks the links in the Markdown docs (README.md, PLAN.md,
+# RESULTS.md) whenever a change touches them. The build and test workflow (ci.yml) runs by hand.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["**.md", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["**.md", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  links:
+    name: Links
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Relative links must point at files in the repository; external links must answer.
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --no-progress './**/*.md'
+          fail: true
