@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "backend/backend.h"
@@ -280,12 +281,14 @@ int main(int argc, char** argv) {
   // or 32 good ones, never could need 5,000 hypotheses there and stay on the CPU. CUDA: 1,000 hypotheses
   // after 16 CPU iterations, so 6 failing candidates move too and one alone stays; a good candidate that
   // has not found its model by then may move with them (gpu = -1: either way, only solved and capped count).
+  // WebGPU natively (more than two CPU threads) has Metal's numbers.
   struct Case {
     uint32_t good, failing;
     int gpu;  // 1 moves, 0 stays, -1 either
   };
   std::vector<Case> one_round_cases;
-  if (id == JPO_BACKEND_METAL) one_round_cases = {{8, 24, 1}, {2, 6, 0}, {32, 0, 0}};
+  if (id == JPO_BACKEND_METAL || (id == JPO_BACKEND_WEBGPU && std::thread::hardware_concurrency() > 2))
+    one_round_cases = {{8, 24, 1}, {2, 6, 0}, {32, 0, 0}};
   if (id == JPO_BACKEND_CUDA) one_round_cases = {{8, 24, 1}, {2, 6, 1}, {0, 1, 0}, {32, 0, -1}};
   if (!one_round_cases.empty()) {
     jpo_config cfg;

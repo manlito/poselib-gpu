@@ -49,12 +49,31 @@ void auto_rule(int32_t gpu_backend, int cpu_threads, Route* route) {
       route->one_round_gpu_min_total = 1000;
       break;
     case JPO_BACKEND_WEBGPU:
-      // Dawn on the M5 Pro's GPU costs what the Metal backend costs, so the same rule per CPU thread
-      // (50,000 / 18). In a browser the CPU backend has one thread and the GPU is 20 to 40 times
-      // faster on anything that does not stop at once: a few thousand hypotheses are enough.
-      route->cpu_iterations = 256;
-      route->gpu_min_remaining = cpu_threads <= 2 ? 256 : 1024;
-      route->gpu_min_total = 2800ull * static_cast<uint64_t>(cpu_threads > 0 ? cpu_threads : 1);
+      if (cpu_threads > 2) {
+        // Dawn on the M5 Pro's GPU costs what the Metal backend costs, and measured natively it wants
+        // Metal's rule, the total per CPU thread (50,000 / 18): 128 / 512 moved the same resection
+        // batches at 30 % inliers (3000 of 200 points: 150 -> 48 ms), and Metal's one-round numbers
+        // were the best of nine on candidate rounds.
+        route->cpu_iterations = 128;
+        route->gpu_min_remaining = 512;
+        route->gpu_min_total = 2800ull * static_cast<uint64_t>(cpu_threads);
+        route->one_round_cpu_iterations = 64;
+        route->one_round_gpu_min_remaining = 256;
+        route->one_round_gpu_min_total = 5000;
+        break;
+      }
+      // In a browser the CPU backend has one WebAssembly thread, and WebGPU alone wins from about four
+      // problems up, easy ones included (100 easy pairs: 87 ms on the CPU, 24 ms). So the CPU phase is
+      // the CPU's first round (32), and whatever still needs 32 more moves once a thousand hypotheses
+      // are left (Chrome on the M5 Pro; the bench grid 2.0 -> 1.1 s at 100 problems). A budget that fits
+      // in one GPU round moves after a single CPU hypothesis once there are two problems or more: within
+      // 10 % of WebGPU alone on candidate rounds, where the numbers above are 1.5 times slower.
+      route->cpu_iterations = 32;
+      route->gpu_min_remaining = 32;
+      route->gpu_min_total = 1000;
+      route->one_round_cpu_iterations = 1;
+      route->one_round_gpu_min_remaining = 1;
+      route->one_round_gpu_min_total = 1000;
       break;
     default:
       break;

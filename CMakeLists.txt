@@ -168,7 +168,7 @@ if(EMSCRIPTEN AND JPO_BUILD_WASM)
   target_link_options(jpo_wasm PRIVATE
     -sJSPI
     "-sJSPI_EXPORTS=jpow_create,jpow_relative,jpow_absolute"
-    "-sEXPORTED_FUNCTIONS=_malloc,_free,_jpow_backend_available,_jpow_create,_jpow_destroy,_jpow_relative,_jpow_absolute,_jpow_synth,_jpow_error"
+    "-sEXPORTED_FUNCTIONS=_malloc,_free,_jpow_backend_available,_jpow_create,_jpow_destroy,_jpow_relative,_jpow_absolute,_jpow_synth,_jpow_error,_jpow_set_route,_jpow_last_stats"
     "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32,HEAPF64,UTF8ToString"
     -sMODULARIZE
     -sEXPORT_ES6
@@ -177,7 +177,7 @@ if(EMSCRIPTEN AND JPO_BUILD_WASM)
     -sALLOW_MEMORY_GROWTH
     -sMAXIMUM_MEMORY=4GB
     -sSTACK_SIZE=1MB)
-  foreach(f jpo.js test.html)
+  foreach(f jpo.js test.html bench.html)
     add_custom_command(TARGET jpo_wasm POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
                        "${CMAKE_CURRENT_SOURCE_DIR}/web/${f}" "${CMAKE_CURRENT_BINARY_DIR}/web/${f}")
   endforeach()

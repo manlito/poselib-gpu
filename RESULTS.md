@@ -244,8 +244,8 @@ first change, D phase 128 with both (the current rule); selected cells, ms:
 
 Natively through Dawn on the M5 Pro the WebGPU backend costs what Metal costs (300 pairs of 200 matches with
 no model: 211 ms against 197 ms for Metal and 500 ms for the CPU; 300 resections of 2000 points: 216 ms
-against 224 ms and 1282 ms), so natively it follows Metal's rule as it was measured for M5 (256-iteration
-CPU phase, 1024 remaining); the later 128 / 512 change on Metal was not measured on WebGPU.
+against 224 ms and 1282 ms), and measured natively it wants Metal's rule too ("`auto` on WebGPU through
+Dawn", below).
 
 In the browser (the app's built-in Chromium on the M5 Pro, WebAssembly on one thread, `web/test.html`,
 20 problems per set, best of three, ms):
@@ -262,7 +262,135 @@ In the browser (the app's built-in Chromium on the M5 Pro, WebAssembly on one th
 One problem at a time in the browser: an easy pair 1.8 ms on the CPU and 3.5 ms on WebGPU; a hard pair
 34.7 ms and 7.9 ms (`auto` 8.1 ms); a hard resection 21.2 ms and 4.8 ms (`auto` 5.3 ms). Every set is solved
 20 of 20 on all three, and the WebAssembly CPU rows equal `jpo webcheck --threads 1` natively. Browser
-timings were taken once, in one browser; Chrome itself, Safari and Firefox were not run.
+timings were taken once, in one browser; Chrome itself, Safari and Firefox were not run. The `auto` column
+is the rule before the browser re-tune below.
+
+### `auto` on WebGPU through Dawn
+
+The native WebGPU build (`-DJPO_METAL=OFF`, so that `auto` picks WebGPU) on the M5 Pro, 18 threads, the
+same searches as on Metal: `jpo bench --backends auto --batches 1,2,4,8,32,300,3000` with CPU phases of 128
+and 256 and 512 or 1024 remaining (total 2,800 per thread, 50,400), best of two runs, the second in reverse
+order. 128 / 512 re-routes 44 cells, 12 % faster (geometric mean), solved counts the same in all 112; the
+68 that route the same are 1 % slower; the grid takes 20.3 s instead of 21.5 s. 256 / 512 re-routes only
+the four resection batches at 30 % (all faster); 128 / 1024 every hard batch of 8 or more, 4 % faster.
+Selected cells, ms (cpu and webgpu from one full run before):
+
+| kind | batch | points | inliers | cpu | webgpu | auto, 256 / 1024 | auto, 128 / 512 |
+|---|---|---|---|---|---|---|---|
+| relpose | 4 | 2000 | 0.7 | 1.22 | 4.36 | 1.21 | 1.33 |
+| relpose | 32 | 200 | 0 | 54.79 | 28.06 | 30.50 | 29.11 |
+| relpose | 3000 | 200 | 0.1 | 5228.99 | 2113.02 | 2187.10 | 2084.11 |
+| pnp | 8 | 200 | 0.1 | 4.32 | 3.24 | 5.39 | 3.31 |
+| pnp | 32 | 200 | 0.3 | 2.61 | 1.10 | 2.73 | 2.70 |
+| pnp | 300 | 200 | 0.3 | 14.30 | 5.41 | 14.43 | 5.50 |
+| pnp | 300 | 2000 | 0.3 | 33.76 | 50.44 | 34.73 | 26.20 |
+| pnp | 3000 | 200 | 0.3 | 148.42 | 49.82 | 150.01 | 47.53 |
+| pnp | 3000 | 2000 | 0.3 | 337.25 | 507.93 | 346.30 | 233.52 |
+| pnp | 3000 | 2000 | 0.1 | 3757.37 | 854.61 | 1109.80 | 977.27 |
+
+As on Metal, 32 resections of 200 points at 30 % stay on the CPU (2.70 against 1.10 ms): they need under
+50,400 hypotheses between them. The total was not searched again; it costs what it costs on Metal.
+
+`jpo candidates` with the one-round overrides: CPU phases of 16, 32, 64 and 128, 128 or 256 remaining,
+totals 1,000, 2,000 and 5,000. Single runs scatter (cells of 1.5 ms read 4 to 7 ms at random, the dispatch
+latency of rounds this short), so the eight best were run three times, interleaved, best of three. Metal's
+64 / 256 / 5,000 is the best of them (ms per round with `min_inlier_ratio` 0.25; without it every
+configuration is within 7 %):
+
+| K | failing | cpu | webgpu | auto, no one-round numbers | auto, 64 / 256 / 5,000 |
+|---|---|---|---|---|---|
+| 8 | 0 | 0.52 | 1.03 | 0.49 | 0.53 |
+| 8 | 0.75 | 1.01 | 0.99 | 0.91 | 0.96 |
+| 16 | 0 | 0.75 | 1.22 | 0.77 | 0.76 |
+| 16 | 0.5 | 1.35 | 1.21 | 1.35 | 1.35 |
+| 16 | 0.75 | 1.62 | 1.10 | 1.57 | 1.41 |
+| 32 | 0 | 1.29 | 1.50 | 1.32 | 1.32 |
+| 32 | 0.25 | 1.84 | 1.50 | 1.95 | 1.91 |
+| 32 | 0.5 | 2.27 | 1.47 | 2.29 | 2.09 |
+| 32 | 0.75 | 2.99 | 1.40 | 2.98 | 2.00 |
+
+The worst cell against the faster of cpu and webgpu is 1.43 times (2.13 without one-round numbers). 16 /
+128 / 5,000 is faster at K = 32 with half or more failing (1.69 to 1.85 ms) but slower with none (1.58).
+WebGPU natively now uses Metal's numbers: 128 / 512 / 2,800 per thread, and 64 / 256 / 5,000 for a
+one-round budget; the built-in rule routes every grid cell as the overrides did.
+
+### `auto` in the browser
+
+`web/bench.html` runs `jpo bench` cells and candidate rounds in the page, and takes the rule's numbers as a
+`route=` parameter, as the CLI overrides. It was run in headless Chrome 157 on the M5 Pro
+(`tools/browser_bench.mjs`), because the app's browser pane throttles the page whenever its window is out of
+view; WebAssembly on one thread, WebGPU on the same GPU. Grid: batches 1, 4, 32 and 100, best of three runs
+of `auto` per configuration, every configuration run twice in opposite orders; cpu and webgpu from one run
+before (best of two).
+
+On one WebAssembly thread the CPU is slow enough that WebGPU alone wins from about four problems up, easy
+ones included, and the old rule (a 256 phase, 256 remaining, 2,800 total) left most of that on the table.
+Shorter phases won throughout: 128 / 256 / 2,800 made the grid 2.4 s instead of 3.0, 64 / 128 / 1,000 1.9 s,
+and a 32 phase (the CPU's first round on one thread, so the shortest there is) 1.65 s with 0, 32 or 128
+remaining and a total of 200 or 1,000. 32 / 32 / 1,000 has the lowest worst cell (1.53 times the faster
+backend); moving everything (16 / 0 / 0) sends single easy problems to the GPU, 4 times slower. Confirmed
+with the built-in rule afterwards (same routing as the override in every cell, same solved counts), ms:
+
+| kind | batch | points | inliers | wasm cpu | webgpu | auto, 256 / 256 / 2,800 | auto, 32 / 32 / 1,000 |
+|---|---|---|---|---|---|---|---|
+| relpose | 1 | 200 | 0.7 | 1.2 | 5.9 | 0.7 | 1.1 |
+| relpose | 1 | 200 | 0.3 | 35.0 | 6.5 | 7.1 | 5.8 |
+| relpose | 4 | 200 | 0.3 | 141.2 | 7.7 | 11.6 | 8.0 |
+| relpose | 32 | 200 | 0.7 | 28.6 | 10.7 | 27.6 | 9.9 |
+| relpose | 32 | 200 | 0.3 | 1126.1 | 29.9 | 58.2 | 33.7 |
+| relpose | 100 | 200 | 0.7 | 86.8 | 24.4 | 86.0 | 25.5 |
+| relpose | 100 | 2000 | 0.3 | 3485.0 | 134.0 | 225.8 | 143.5 |
+| pnp | 1 | 200 | 0.7 | 0.1 | 0.7 | 0.1 | under 0.1 |
+| pnp | 1 | 2000 | 0.1 | 24.6 | 5.9 | 6.9 | 5.3 |
+| pnp | 4 | 2000 | 0.3 | 7.3 | 3.5 | 5.9 | 3.6 |
+| pnp | 32 | 2000 | 0.3 | 56.5 | 13.9 | 35.2 | 20.5 |
+| pnp | 32 | 2000 | 0.1 | 631.7 | 20.6 | 74.6 | 27.3 |
+| pnp | 100 | 200 | 0.3 | 77.6 | 5.6 | 24.3 | 7.8 |
+| pnp | 100 | 2000 | 0.1 | 1857.0 | 49.6 | 210.7 | 72.4 |
+| pnp | 100 | 2000 | 0 | 6478.7 | 82.9 | 247.9 | 103.7 |
+
+The whole grid by batch size (ms, sum of 16 cells each):
+
+| batch | wasm cpu | webgpu | auto before | auto now |
+|---|---|---|---|---|
+| 1 | 307 | 82 | 68 | 59 |
+| 4 | 1253 | 104 | 126 | 89 |
+| 32 | 9950 | 351 | 710 | 393 |
+| 100 | 31016 | 952 | 2082 | 1085 |
+
+The worst cell is now 1.50 times the faster backend (100 resections of 2000 points at 30 %), against 4.3
+times before; still slower than WebGPU alone on hard resection batches, where the CPU's 32 iterations cost
+more than the GPU's whole run.
+
+Candidate rounds (the browser's own draws, not `jpo candidates`', five rounds, best of three, ms per round
+with `min_inlier_ratio` 0.25). One-round numbers tried: 1 / 1 / 1, 16 / 64 / 200, 16 / 128 / 1,000, 32 / 64 /
+500, 32 / 128 / 1,000 and 64 / 256 / 5,000, each twice in opposite orders. On one thread the one-round
+phase is not widened to a first CPU round, so a phase of 1 means a single CPU hypothesis per problem and
+then the GPU: that was the best by far (38.7 ms for the 12 cells, WebGPU alone 34.9, the general rule's
+numbers 55, the old rule 118). Its total, raised to 1,000, keeps a lone problem on the general rule, where
+an easy one stays on the CPU (K = 1, none failing: 0.27 ms against 0.86 on WebGPU). Confirmed with the
+built-in rule:
+
+| K | failing | wasm cpu | webgpu | auto |
+|---|---|---|---|---|
+| 1 | 0 | 0.33 | 0.86 | 0.27 |
+| 2 | 0.5 | 1.63 | 1.04 | 0.96 |
+| 4 | 0 | 1.05 | 1.37 | 1.36 |
+| 8 | 0 | 2.32 | 1.98 | 1.94 |
+| 8 | 0.75 | 8.02 | 1.20 | 1.26 |
+| 16 | 0 | 4.42 | 3.20 | 3.50 |
+| 16 | 0.5 | 13.12 | 2.16 | 2.92 |
+| 16 | 0.75 | 17.42 | 1.72 | 1.80 |
+| 32 | 0 | 9.42 | 5.64 | 6.26 |
+| 32 | 0.5 | 26.32 | 3.96 | 4.22 |
+| 32 | 0.75 | 34.64 | 3.38 | 3.56 |
+
+K = 8 to 32: 36.9 ms in all against 34.3 for WebGPU alone, every good candidate solved on all three.
+Without the option `auto` is 7 to 22 % slower than WebGPU alone on rounds of 8 to 32 with failing
+candidates (the 32-iteration phase), and 7 to 38 times faster than the CPU.
+
+In the browser (one or two CPU threads) `auto` now uses 32 / 32 / 1,000, and 1 / 1 / 1,000 for a one-round
+budget. Two threads were not measured. Chrome only, one machine; Safari and Firefox were not run.
 
 ## K candidates per registration round (M5 Pro, Metal)
 

@@ -313,7 +313,11 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     times slower than one native thread. The WGSL port (hand-written, 1600 lines) passes `backend_test
     webgpu` natively through Dawn, including with a device supplied by the caller, and runs in the browser
     through Emscripten: 20 to 40 times faster than the WebAssembly CPU on hard sets (`auto` 13 to 20 times), about equal on easy
-    ones (RESULTS.md). Browser timings come from one run in one Chromium; Safari and Firefox were not run.
+    ones (RESULTS.md). The browser's `auto` rule was re-tuned since (`web/bench.html` in headless Chrome,
+    `tools/browser_bench.mjs`): a 32-iteration CPU phase, and a single CPU hypothesis for a one-round
+    budget, because WebGPU alone wins from about four problems up there; the bench grid takes 1.6 s
+    instead of 3.0, candidate rounds come within 8 % of WebGPU alone. Browser timings come from Chrome on
+    one machine; Safari and Firefox were not run.
 
 - [ ] **M7 — Public docs and demo** (Cloudflare Pages)
   - Site: build, quick start, concepts (rounds, precision, conventions), C API, accuracy and speed, in the
@@ -344,8 +348,8 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 |---|---|---|---|---|
 | Metal | M5 Pro, 18 threads | 128 | 512 | 50,000 |
 | CUDA | RTX 2070 Max-Q, i7-9750H | 128 | 512 | 5,000 |
-| WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
-| WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
+| WebGPU, native | M5 Pro through Dawn | 128 | 512 | 2,800 per CPU thread |
+| WebGPU, browser (one or two threads) | M5 Pro, headless Chrome | 32 | 32 | 1,000 |
 
 A call whose iteration budget fits in one GPU round (`max_iterations`, or the cap of `min_inlier_ratio`,
 at most 2048; resections at r = 0.25 draw at most 585) has its own three numbers, because whatever moves then
@@ -357,7 +361,8 @@ otherwise, and on backends without them, the numbers above apply.
 |---|---|---|---|
 | Metal | 64 | 256 | 5,000 |
 | CUDA | 16 | 128 | 1,000 |
-| WebGPU | not measured: the numbers above | | |
+| WebGPU, native | 64 | 256 | 5,000 |
+| WebGPU, browser | 1 | 1 | 1,000 |
 
 The numbers belong to those machines. Another CPU/GPU pair would want its own; nothing calibrates at run time.
 
@@ -407,6 +412,11 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
   second round; a problem that cannot reach `gpu_min_remaining` keeps its whole round (routing unchanged).
   This made a 128-iteration phase pay on CUDA and Metal (RESULTS.md, "CPU phase of 128 on CUDA", "CPU
   phase of 128 and 512 remaining on Metal").
+- **The browser has its own `auto` numbers**, not Metal's per thread: on one WebAssembly thread WebGPU
+  alone wins from about four problems up, so the CPU phase is its first round and a one-round budget
+  moves after one hypothesis (RESULTS.md, "`auto` in the browser"). Timed in headless Chrome
+  (`tools/browser_bench.mjs`), because the app's browser pane is throttled whenever its window is out of
+  view.
 - **Iterations, not rounds, in the options and results.** They mean what they mean in PoseLib on every backend.
 - **Hypotheses are scored as poses with a cheirality test**, not as essential matrices (PoseLib's
   behaviour). Scoring E alone lost planar scenes.
@@ -427,9 +437,11 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - Real images, real matches and the comparison with COLMAP (M0, M2): nothing to run them on here.
 - The accuracy shortfall on the hardest relative-pose set (M1).
 - Windows, and the hosted CI workflow, have never run.
-- Browsers other than one Chromium; the browser timings are a single run.
-- WebGPU timings for `min_inlier_ratio`, one-round numbers for WebGPU, and whether the 128 / 512 CPU phase
-  of Metal and CUDA also pays there (it keeps 256 / 1024).
+- Browsers other than Chrome; the browser rule was measured in headless Chrome on one machine, and its
+  two-thread branch (the same numbers) was not measured at all.
+- In the browser `auto` is still up to 1.5 times slower than WebGPU alone on hard resection batches (100 x
+  2000 at 30 %: 60.8 against 40.6 ms), and 7 to 22 % on candidate rounds without `min_inlier_ratio`: the
+  CPU's first round of 32 iterations is the shortest phase it has on one thread.
 - `auto` with `min_inlier_ratio` set is still 0.15 to 0.5 ms per round behind Metal alone at K = 16 to 32
   with failing candidates (the 64-iteration CPU phase), and 0.1 to 0.9 ms behind CUDA alone (the
   16-iteration phase); on CUDA, rounds with no failing candidate at K = 16 to 32 are 0.3 to 0.6 ms behind

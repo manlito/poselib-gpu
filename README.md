@@ -60,7 +60,9 @@ then. On the M5 Pro a round of 8 to 32 candidates with a quarter to three quarte
 times faster than without the option, with every good candidate still solved, and `auto` sends the
 failing candidates of rounds of 16 or more to Metal when that is faster. On the NVIDIA laptop (6 cores,
 RTX 2070 Max-Q) the option gains 7 to 14 times on the CPU, and `auto` moves the failing candidates of
-every round to CUDA, 1.35 to 4.2 times faster than staying on the CPU (RESULTS.md). The option also
+every round to CUDA, 1.35 to 4.2 times faster than staying on the CPU (RESULTS.md). In the browser,
+where the CPU backend has one thread, `auto` moves rounds of two candidates or more to WebGPU after one CPU
+hypothesis each, within 8 % of WebGPU alone. The option also
 applies to `jpo_relative_pose`, but with five-point samples the cap is near 10,000 anyway, so leave it at 0
 for pairs. CLI: `--min-inlier-ratio r` for `jpo run` and `jpo bench`; JavaScript: `minInlierRatio`.
 
@@ -101,7 +103,7 @@ WebAssembly (Emscripten 7.0.0):
 
 ```sh
 emcmake cmake -S . -B build/wasm -G Ninja
-cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html
+cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html, bench.html
 ```
 
 ## Command line
@@ -125,6 +127,7 @@ python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with Pose
 | `backend_test <gpu>` | A GPU backend against the float CPU build: the same best hypothesis per round, the same problems solved. |
 | `incremental_test` | An incremental reconstruction of three generated scenes with just-ba. |
 | `web/test.html` | The generated sets in the browser, next to `jpo webcheck` natively. |
+| `web/bench.html` | `jpo bench` cells and candidate rounds in the browser, for the `auto` rule there (`tools/browser_bench.mjs` runs it in headless Chrome). |
 
 Hosted CI runs the CPU tests and the WebAssembly build. GPU tests are run by hand on the machine that has
 the GPU.

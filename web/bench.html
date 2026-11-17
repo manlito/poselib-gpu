@@ -1,0 +1,172 @@
+<!doctype html>
+<!-- Timing in the browser, for tuning the `auto` rule there (RESULTS.md, "`auto` in the browser"). Serve
+     this directory and open it with query parameters (tools/browser_bench.mjs runs it in headless Chrome):
+
+       ?mode=grid&kinds=relpose,pnp&batches=1,32,300&points=200,2000&inliers=0.7,0.3,0.1,0
+       ?mode=candidates&k=8,16,32&failing=0,0.25,0.5,0.75&ratio=0.25&rounds=5
+       &backends=cpu,webgpu,auto   &repeat=3   &minInlierRatio=0.25 (grid)
+       &route=cpu,remaining,total,oneCpu,oneRemaining,oneTotal   (auto only; -1 keeps a number)
+
+     A grid cell is one `jpo bench` cell (same generator, seed 7, 0.5 px / 1 px noise, 1 px / 4 px). A
+     candidate round is K resections of 300 to 1000 points, good ones 50 to 70 % inliers, failing ones 0 to
+     10 %, shuffled, as `jpo candidates` (not the same draws). ms: best of `repeat` runs after a warm-up;
+     candidates: mean over rounds. Rows also go to window.jpoBenchRows; window.jpoBenchDone is set at the end. -->
+<meta charset="utf-8">
+<title>jpo browser bench</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 2em; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid #ccc; padding: 4px 10px; text-align: right; }
+  #status { margin: 1em 0; font-weight: 600; }
+</style>
+<h1>jpo browser bench</h1>
+<div id="status">running…</div>
+<table id="table"></table>
+<pre id="log"></pre>
+<script type="module">
+import { createJpoModule, Jpo, BACKEND, synth, poseErrors } from "./jpo.js";
+
+const q = new URLSearchParams(location.search);
+const list = (k, d) => (q.get(k) ?? d).split(",").filter((s) => s.length);
+const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
+const mode = q.get("mode") ?? "grid";
+const repeat = Math.max(1, num("repeat", 3));
+const log = (t) => (document.getElementById("log").textContent += t + "\n");
+const rows = [];
+window.jpoBenchRows = rows;
+const table = document.getElementById("table");
+const header = (cols) => {
+  const tr = table.insertRow();
+  cols.forEach((c) => { const th = document.createElement("th"); th.textContent = c; tr.appendChild(th); });
+};
+const addRow = (row, cols) => {
+  rows.push(row);
+  const tr = table.insertRow();
+  cols.forEach((c) => (tr.insertCell().textContent = typeof row[c] === "number" && !Number.isInteger(row[c]) ? row[c].toFixed(3) : row[c]));
+};
+
+// One problem set as several merged into one batch (candidate rounds mix problem sizes).
+function merge(parts) {
+  const out = { offsets: [0], xy: [], xyz: [], cameras: [], camera: [], gt: [] };
+  for (const p of parts) {
+    const n = p.offsets.length - 1;
+    for (let i = 0; i < n; ++i) {
+      out.offsets.push(out.offsets[out.offsets.length - 1] + (p.offsets[i + 1] - p.offsets[i]));
+      out.camera.push(out.cameras.length + p.camera[i]);
+    }
+    out.xy.push(...p.xy);
+    out.xyz.push(...p.xyz);
+    out.cameras.push(...p.cameras);
+    out.gt.push(...p.gt);
+  }
+  return { offsets: Uint32Array.from(out.offsets), xy: Float64Array.from(out.xy), xyz: Float64Array.from(out.xyz),
+           cameras: out.cameras, camera: Uint32Array.from(out.camera), gt: Float64Array.from(out.gt) };
+}
+function rng(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+try {
+  const module = await createJpoModule();
+  const ids = { cpu: BACKEND.CPU, webgpu: BACKEND.WEBGPU, auto: BACKEND.AUTO };
+  const ctxs = [];
+  for (const name of list("backends", "cpu,webgpu,auto")) {
+    try {
+      const jpo = await Jpo.create(module, { backend: ids[name] });
+      if (name === "auto" && q.has("route")) {
+        const r = list("route", "").map(Number);
+        while (r.length < 6) r.push(-1);
+        if (module._jpow_set_route(jpo.ctx, ...r) !== 0) log("auto: no GPU, route ignored");
+      }
+      ctxs.push([name, jpo]);
+    } catch (e) {
+      log(`${name}: ${e.message}`);
+    }
+  }
+  const statsPtr = module._malloc(16);
+  const stats = (jpo) => {
+    module._jpow_last_stats(jpo.ctx, statsPtr);
+    const s = new Float64Array(module.HEAPU8.buffer, statsPtr, 2);
+    return [s[0], s[1]];
+  };
+  const time = async (fn) => {
+    let best = Infinity, out;
+    for (let r = 0; r < repeat + 1; ++r) {
+      const t0 = performance.now();
+      out = await fn();
+      if (r > 0 || repeat === 1) best = Math.min(best, performance.now() - t0);
+    }
+    return [best, out];
+  };
+
+  if (mode === "grid") {
+    const cols = ["kind", "batch", "points", "inliers", "backend", "ms", "ok", "cpu_hyp", "gpu_hyp"];
+    header(cols);
+    const mir = num("minInlierRatio", 0);
+    for (const kind of list("kinds", "relpose,pnp"))
+      for (const batch of list("batches", "1,32,300"))
+        for (const points of list("points", "200,2000"))
+          for (const inliers of list("inliers", "0.7,0.3,0.1,0")) {
+            const k = kind === "pnp" ? 1 : 0;
+            const p = synth(module, { kind: k, count: Number(batch), points: Number(points), inliers: Number(inliers), noise: k ? 1 : 0.5, seed: 7 });
+            const opt = { maxErrorPx: k ? 4 : 1, minInlierRatio: mir };
+            for (const [name, jpo] of ctxs) {
+              const [ms, out] = await time(() => (k ? jpo.absolutePose(p, opt) : jpo.relativePose(p, opt)));
+              const [ch, gh] = stats(jpo);
+              addRow({ kind, batch: Number(batch), points: Number(points), inliers: Number(inliers), backend: name, ms,
+                       ok: out.results.filter((r) => r.status === 0).length, cpu_hyp: ch, gpu_hyp: gh }, cols);
+            }
+          }
+  } else {
+    const cols = ["K", "failing", "backend", "ms_off", "ms_on", "good_solved_off", "good_solved_on", "good", "gpu_hyp_on"];
+    header(cols);
+    const ratio = num("ratio", 0.25), rounds = Math.max(1, num("rounds", 5));
+    for (const K of list("k", "8,16,32").map(Number))
+      for (const failing of list("failing", "0,0.25,0.5,0.75").map(Number)) {
+        const sets = [];
+        for (let round = 0; round < rounds; ++round) {
+          const rand = rng(1000 * K + 100 * round + Math.round(100 * failing));
+          const nFail = Math.round(K * failing);
+          const parts = [], good = [];
+          for (let i = 0; i < K; ++i) {
+            const bad = i < nFail;
+            parts.push(synth(module, { kind: 1, count: 1, points: 300 + Math.floor(rand() * 701),
+                                       inliers: bad ? 0.1 * rand() : 0.5 + 0.2 * rand(), noise: 1, seed: 5000 + 97 * K + 13 * round + i }));
+            good.push(!bad);
+          }
+          const order = parts.map((_, i) => i).sort(() => rand() - 0.5);
+          sets.push({ p: merge(order.map((i) => parts[i])), good: order.map((i) => good[i]) });
+        }
+        for (const [name, jpo] of ctxs) {
+          const row = { K, failing, backend: name, ms_off: 0, ms_on: 0, good_solved_off: 0, good_solved_on: 0, good: 0, gpu_hyp_on: 0 };
+          for (const s of sets) {
+            row.good += s.good.filter(Boolean).length;
+            for (const [key, mir] of [["off", 0], ["on", ratio]]) {
+              const [ms, out] = await time(() => jpo.absolutePose(s.p, { maxErrorPx: 4, minInlierRatio: mir }));
+              row["ms_" + key] += ms / sets.length;
+              if (key === "on") row.gpu_hyp_on += stats(jpo)[1];
+              out.results.forEach((r, i) => {
+                if (!s.good[i] || r.status !== 0) return;
+                const [rot] = poseErrors(1, r.pose, s.p.gt.slice(7 * i, 7 * i + 7));
+                if (rot < 1) row["good_solved_" + key] += 1;
+              });
+            }
+          }
+          addRow(row, cols);
+        }
+      }
+  }
+  module._free(statsPtr);
+  ctxs.forEach(([, jpo]) => jpo.destroy());
+  document.getElementById("status").textContent = "done";
+} catch (e) {
+  document.getElementById("status").textContent = "failed: " + e.message;
+  log(e.stack || String(e));
+}
+window.jpoBenchDone = true;
+</script>
