@@ -76,7 +76,9 @@ void early_rejection(uint32_t n, size_t best_inliers, double f_floor, uint32_t* 
   *pre_min = static_cast<uint32_t>(m);
 }
 
-// The points a refinement can use: those within sqrt(5) thresholds of the model (PoseLib's choice).
+// The points a refinement can use: those within sqrt(5) thresholds of the model that pass the cheirality
+// test (PoseLib's get_inliers). An outlier behind a camera that happens to lie near its epipolar line
+// would otherwise pull the pose toward it.
 void near_points_rel(const Pose& pose, const double* pts, size_t n, double sq_thr, std::vector<double>* out) {
   out->clear();
   double E[9];
@@ -89,7 +91,12 @@ void near_points_rel(const Pose& pose, const double* pts, size_t n, double sq_th
     const double b0 = E[0] * p[2] + E[3] * p[3] + E[6];
     const double b1 = E[1] * p[2] + E[4] * p[3] + E[7];
     const double C = p[2] * a0 + p[3] * a1 + a2;
-    if (C * C < 5.0 * sq_thr * (a0 * a0 + a1 * a1 + b0 * b0 + b1 * b1)) out->insert(out->end(), p, p + 4);
+    if (!(C * C < 5.0 * sq_thr * (a0 * a0 + a1 * a1 + b0 * b0 + b1 * b1))) continue;
+    const double i1 = 1.0 / std::sqrt(p[0] * p[0] + p[1] * p[1] + 1.0);
+    const double i2 = 1.0 / std::sqrt(p[2] * p[2] + p[3] * p[3] + 1.0);
+    const double v1[3] = {p[0] * i1, p[1] * i1, i1}, v2[3] = {p[2] * i2, p[3] * i2, i2};
+    if (!check_cheirality(pose, v1, v2)) continue;
+    out->insert(out->end(), p, p + 4);
   }
 }
 

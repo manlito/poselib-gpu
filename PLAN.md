@@ -225,11 +225,13 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     A written decision on float32 minimal solvers (keep, or fall back to host solves).
   - **Done.** Solvers against PoseLib's on the same samples (`parity_test`): 5-point reproduces 22105 of
     PoseLib's 22119 exact solutions, P3P 10103 of 10111. Success rate within PoseLib's seed spread on every
-    set (largest shortfall of the mean below PoseLib's worst seed: 0.1 %). **Short of the exit on one set:**
-    on `relpose_harder` (20 % inliers, 1 px noise) the success rate is equal (89.0 % against 89.1 %) but the
-    poses are less accurate, AUC@5 0.739 against 0.788 (PoseLib's seeds: 0.759 to 0.821); `relpose_planar`
-    is 0.795 against 0.817. Not yet explained; the likely place is the local optimization, which PoseLib
-    runs on every new best model and this code runs once per round.
+    set but `relpose_planar` (0.840 against PoseLib's worst seed 0.845, below). `relpose_harder` (20 %
+    inliers, 1 px noise) was short of the exit until the local optimization took PoseLib's point selection,
+    cheirality test included: AUC@5 0.739 → 0.793 against PoseLib's 0.788, success rate 89.0 → 90.7 %
+    against 89.1 % (RESULTS.md, "The `relpose_harder` gap"). **Still short on one set:** `relpose_planar`,
+    AUC@5 0.803 against 0.817 (PoseLib's seeds 0.809 to 0.826). What is left there is how often the local
+    optimization runs: once per round here, on every new best model in PoseLib; one hypothesis per round
+    closes it at several times the run time, so it was not kept.
   - **Float32 decision: keep the minimal solvers in float on the GPU.** The float build reproduces about
     92 % of the double 5-point solutions and the estimator solves the same problems (`precision_test`:
     100/100 at 70 % and 30 % inliers in both, 11 against 12 of 100 at 10 %); on `relpose_harder` float
@@ -285,8 +287,8 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
   - **Done on Linux.** Same kernel source through nvcc; `backend_test cuda` passes. RTX 2070 Max-Q against
     a 6-core i7-9750H: pairs at 30 % or less 6 to 9 times on batches and about 2 times on one pair;
     resections at 10 % or none 6 to 17 times; easy problems 0.4 to 0.8 times. Its own `auto` rule (below).
-    **Not done:** Windows. The CPU build and tests are in the CI matrix for Windows but that workflow has
-    never run (nothing was pushed), and CUDA on Windows was not tried.
+    The CPU build and tests pass in CI on Windows (windows-2025), Linux and macOS. **Not done:** CUDA on
+    Windows was not tried.
 
 - [x] **M5 — Fast**
   - Tuning on both machines where the profiles point: rounds for problems of very different sizes in one
@@ -423,6 +425,10 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 - **Two Gauss-Newton steps polish each 5-point solution** on the eliminated constraints; without them the
   solver was less exact than PoseLib's, in float visibly so.
 - **Early rejection and a score bound** in the round (M3), which is where most of the GPU's margin came from.
+- **The local optimization refines on points near the model that pass the cheirality test**, as PoseLib's
+  `get_inliers`. Without the test, outliers behind a camera near their epipolar line were refined on and
+  cost `relpose_harder` 0.05 of AUC@5 on every backend. PoseLib's final Cauchy bundle was tried on top and
+  dropped (RESULTS.md, "The `relpose_harder` gap").
 - **CPU rounds double from 32 to 1024 hypotheses** instead of staying small: waking the thread pool for
   tiny rounds made the first CPU version half as fast as PoseLib.
 - **Fused multiply-add is left on** (15 to 25 % faster on Apple silicon), so backends agree on the best
@@ -435,8 +441,9 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 ### Not done, or not verified
 
 - Real images, real matches and the comparison with COLMAP (M0, M2): nothing to run them on here.
-- The accuracy shortfall on the hardest relative-pose set (M1).
-- Windows, and the hosted CI workflow, have never run.
+- `relpose_planar` is still under PoseLib's seed spread (M1): AUC@5 0.803 against 0.817, success rate
+  0.840 against its worst seed 0.845. `relpose_harder` is closed.
+- CUDA on Windows (the CPU build and tests pass there in CI).
 - Browsers other than Chrome; the browser rule was measured in headless Chrome on one machine, and its
   two-thread branch (the same numbers) was not measured at all.
 - In the browser `auto` is still up to 1.5 times slower than WebGPU alone on hard resection batches (100 x
