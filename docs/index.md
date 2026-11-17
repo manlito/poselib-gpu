@@ -6,6 +6,13 @@ with non-linear refinement, ported from [PoseLib](https://github.com/PoseLib/Pos
 small C API, no dependencies, and hand-written GPU kernels for Metal, CUDA and WebGPU where a GPU is measured
 faster than the CPU.
 
+:::{important}
+**Use [PoseLib](https://github.com/PoseLib/PoseLib).** This project is a test bed for batching and GPU
+kernels, not a replacement for it. It adds nothing to PoseLib except speed: no new solvers, models or
+features, and only a subset of what PoseLib offers. The methods, and the credit for them, are PoseLib's. For
+real work, PoseLib is the library to depend on.
+:::
+
 ```
 just-keypoints  ->  just-matching  ->  poselib-gpu           ->  just-ba
 keypoints           matches per pair    verified matches,         tracks, triangulation,

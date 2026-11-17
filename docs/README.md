@@ -28,7 +28,9 @@ command-line tools; the site build does not need them.
 
 ## Building and deploying
 
-The `site` job of the `docs` workflow (`.github/workflows/docs.yml`) is started by hand:
+The `site` job of the `docs` workflow (`.github/workflows/docs.yml`) builds and deploys the site on every push
+to `main` that touches the Markdown, `docs/` or `web/`, once the link check passes. Pull requests run only the
+link check. It can also be started by hand, on any branch:
 
 ```bash
 gh workflow run docs                    # build the module and the site
