@@ -741,53 +741,53 @@ inliers. PoseLib's row is its own spread over seeds: the noise floor.
 | set | tool | success (min .. max over 5 seeds) | rotation deg | AUC@5 | AUC@10 | inlier IoU | iterations |
 |---|---|---|---|---|---|---|---|
 | relpose_easy | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0198 | 0.9910 | 0.9955 | 0.9532 | 197 |
-| relpose_easy | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0208 | 0.9910 | 0.9955 | 0.9533 | 197 |
-| relpose_easy | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0208 | 0.9910 | 0.9955 | 0.9533 | 197 |
-| relpose_easy | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0206 | 0.9909 | 0.9955 | 0.9533 | 2048 |
+| relpose_easy | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0205 | 0.9911 | 0.9955 | 0.9533 | 197 |
+| relpose_easy | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0205 | 0.9911 | 0.9955 | 0.9533 | 197 |
+| relpose_easy | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0203 | 0.9910 | 0.9955 | 0.9533 | 2048 |
 | relpose_hard | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0333 | 0.9854 | 0.9927 | 0.9527 | 10000 |
-| relpose_hard | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0345 | 0.9851 | 0.9926 | 0.9525 | 10000 |
-| relpose_hard | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0340 | 0.9852 | 0.9926 | 0.9525 | 10000 |
-| relpose_hard | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0344 | 0.9851 | 0.9926 | 0.9525 | 10000 |
+| relpose_hard | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0335 | 0.9856 | 0.9928 | 0.9526 | 10000 |
+| relpose_hard | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0335 | 0.9856 | 0.9928 | 0.9526 | 10000 |
+| relpose_hard | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0336 | 0.9856 | 0.9928 | 0.9527 | 10000 |
 | relpose_harder | poselib | 0.8910 (0.8750 .. 0.9150) | 0.2025 | 0.7876 | 0.8481 | 0.5895 | 10000 |
-| relpose_harder | jpo cpu | 0.8900 (0.8750 .. 0.9150) | 0.2455 | 0.7387 | 0.8277 | 0.5691 | 10000 |
-| relpose_harder | jpo cpu float | 0.8700 (0.8600 .. 0.8800) | 0.2652 | 0.7199 | 0.8102 | 0.5578 | 10000 |
-| relpose_harder | jpo metal | 0.8690 (0.8550 .. 0.8800) | 0.2629 | 0.7180 | 0.8087 | 0.5560 | 10000 |
+| relpose_harder | jpo cpu | 0.9070 (0.8850 .. 0.9250) | 0.2004 | 0.7934 | 0.8586 | 0.5952 | 10000 |
+| relpose_harder | jpo cpu float | 0.8890 (0.8600 .. 0.9050) | 0.2125 | 0.7756 | 0.8425 | 0.5846 | 10000 |
+| relpose_harder | jpo metal | 0.8890 (0.8650 .. 0.9100) | 0.2128 | 0.7753 | 0.8423 | 0.5840 | 10000 |
 | relpose_planar | poselib | 0.8550 (0.8450 .. 0.8650) | 0.0477 | 0.8173 | 0.8392 | 0.9531 | 440 |
-| relpose_planar | jpo cpu | 0.8440 (0.8300 .. 0.8650) | 0.0512 | 0.7948 | 0.8216 | 0.9524 | 444 |
-| relpose_planar | jpo cpu float | 0.8550 (0.8350 .. 0.8700) | 0.0535 | 0.8004 | 0.8305 | 0.9519 | 447 |
-| relpose_planar | jpo metal | 0.8440 (0.8300 .. 0.8550) | 0.0654 | 0.7710 | 0.8106 | 0.9507 | 2048 |
+| relpose_planar | jpo cpu | 0.8400 (0.8300 .. 0.8550) | 0.0483 | 0.8032 | 0.8242 | 0.9531 | 442 |
+| relpose_planar | jpo cpu float | 0.8550 (0.8450 .. 0.8600) | 0.0481 | 0.8138 | 0.8366 | 0.9527 | 445 |
+| relpose_planar | jpo metal | 0.8440 (0.8350 .. 0.8550) | 0.0512 | 0.7960 | 0.8236 | 0.9518 | 2048 |
 | relpose_none | poselib | 1.0000 (1.0000 .. 1.0000) | nan | nan | nan | nan | 10000 |
 | relpose_none | jpo cpu | 1.0000 (1.0000 .. 1.0000) | nan | nan | nan | nan | 10000 |
 | relpose_none | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | nan | nan | nan | nan | 10000 |
 | relpose_none | jpo metal | 1.0000 (1.0000 .. 1.0000) | nan | nan | nan | nan | 10000 |
 | relpose_small_baseline | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0211 | 0.9414 | 0.9707 | 0.9533 | 439 |
-| relpose_small_baseline | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0219 | 0.9390 | 0.9695 | 0.9533 | 441 |
-| relpose_small_baseline | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0221 | 0.9377 | 0.9688 | 0.9531 | 443 |
-| relpose_small_baseline | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0223 | 0.9268 | 0.9634 | 0.9525 | 2048 |
+| relpose_small_baseline | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0213 | 0.9408 | 0.9704 | 0.9534 | 440 |
+| relpose_small_baseline | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0215 | 0.9397 | 0.9699 | 0.9533 | 442 |
+| relpose_small_baseline | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0214 | 0.9357 | 0.9678 | 0.9529 | 2048 |
 | relpose_simple_pinhole | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0221 | 0.9895 | 0.9948 | 0.9517 | 1124 |
-| relpose_simple_pinhole | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0215 | 0.9896 | 0.9948 | 0.9517 | 1125 |
-| relpose_simple_pinhole | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0215 | 0.9896 | 0.9948 | 0.9516 | 1125 |
-| relpose_simple_pinhole | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0223 | 0.9895 | 0.9948 | 0.9515 | 2048 |
+| relpose_simple_pinhole | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0211 | 0.9897 | 0.9949 | 0.9517 | 1125 |
+| relpose_simple_pinhole | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0212 | 0.9897 | 0.9949 | 0.9517 | 1125 |
+| relpose_simple_pinhole | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0210 | 0.9897 | 0.9949 | 0.9516 | 2048 |
 | relpose_pinhole | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0262 | 0.9893 | 0.9946 | 0.9534 | 1114 |
-| relpose_pinhole | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0253 | 0.9893 | 0.9946 | 0.9533 | 1115 |
-| relpose_pinhole | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0254 | 0.9893 | 0.9946 | 0.9533 | 1115 |
-| relpose_pinhole | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0253 | 0.9892 | 0.9946 | 0.9533 | 2048 |
+| relpose_pinhole | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0254 | 0.9894 | 0.9947 | 0.9534 | 1114 |
+| relpose_pinhole | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0255 | 0.9894 | 0.9947 | 0.9534 | 1114 |
+| relpose_pinhole | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0252 | 0.9894 | 0.9947 | 0.9534 | 2048 |
 | relpose_simple_radial | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0198 | 0.9903 | 0.9951 | 0.9522 | 1123 |
-| relpose_simple_radial | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0203 | 0.9903 | 0.9952 | 0.9522 | 1123 |
-| relpose_simple_radial | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0203 | 0.9903 | 0.9952 | 0.9522 | 1123 |
-| relpose_simple_radial | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0194 | 0.9902 | 0.9951 | 0.9522 | 2048 |
+| relpose_simple_radial | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0204 | 0.9904 | 0.9952 | 0.9522 | 1123 |
+| relpose_simple_radial | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0205 | 0.9904 | 0.9952 | 0.9522 | 1123 |
+| relpose_simple_radial | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0204 | 0.9904 | 0.9952 | 0.9522 | 2048 |
 | relpose_radial | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0208 | 0.9897 | 0.9949 | 0.9520 | 1123 |
-| relpose_radial | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0195 | 0.9898 | 0.9949 | 0.9521 | 1123 |
-| relpose_radial | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0195 | 0.9898 | 0.9949 | 0.9520 | 1123 |
-| relpose_radial | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0194 | 0.9898 | 0.9949 | 0.9520 | 2048 |
+| relpose_radial | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0198 | 0.9898 | 0.9949 | 0.9521 | 1123 |
+| relpose_radial | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0198 | 0.9898 | 0.9949 | 0.9521 | 1123 |
+| relpose_radial | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0198 | 0.9898 | 0.9949 | 0.9521 | 2048 |
 | relpose_opencv | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0231 | 0.9896 | 0.9948 | 0.9519 | 1122 |
-| relpose_opencv | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0228 | 0.9897 | 0.9948 | 0.9519 | 1122 |
-| relpose_opencv | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0228 | 0.9896 | 0.9948 | 0.9519 | 1122 |
-| relpose_opencv | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0226 | 0.9894 | 0.9947 | 0.9519 | 2048 |
+| relpose_opencv | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0224 | 0.9897 | 0.9949 | 0.9519 | 1122 |
+| relpose_opencv | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0225 | 0.9897 | 0.9949 | 0.9520 | 1122 |
+| relpose_opencv | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0219 | 0.9897 | 0.9949 | 0.9519 | 2048 |
 | relpose_opencv_fisheye | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0275 | 0.9794 | 0.9897 | 0.7868 | 3365 |
-| relpose_opencv_fisheye | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0288 | 0.9787 | 0.9894 | 0.7863 | 3381 |
-| relpose_opencv_fisheye | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0290 | 0.9785 | 0.9892 | 0.7863 | 3381 |
-| relpose_opencv_fisheye | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0298 | 0.9775 | 0.9888 | 0.7857 | 3442 |
+| relpose_opencv_fisheye | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0285 | 0.9792 | 0.9896 | 0.7863 | 3380 |
+| relpose_opencv_fisheye | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0286 | 0.9789 | 0.9895 | 0.7863 | 3380 |
+| relpose_opencv_fisheye | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0289 | 0.9784 | 0.9892 | 0.7860 | 3437 |
 | pnp_easy | poselib | 1.0000 (1.0000 .. 1.0000) | 0.0024 | 0.9995 | 0.9997 | 1.0000 | 101 |
 | pnp_easy | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0025 | 0.9995 | 0.9997 | 1.0000 | 101 |
 | pnp_easy | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0025 | 0.9995 | 0.9997 | 1.0000 | 101 |
@@ -836,3 +836,40 @@ inliers. PoseLib's row is its own spread over seeds: the noise floor.
 | pnp_opencv_fisheye | jpo cpu | 1.0000 (1.0000 .. 1.0000) | 0.0048 | 0.9990 | 0.9995 | 1.0000 | 287 |
 | pnp_opencv_fisheye | jpo cpu float | 1.0000 (1.0000 .. 1.0000) | 0.0048 | 0.9990 | 0.9995 | 1.0000 | 287 |
 | pnp_opencv_fisheye | jpo metal | 1.0000 (1.0000 .. 1.0000) | 0.0048 | 0.9990 | 0.9995 | 1.0000 | 2048 |
+
+### The `relpose_harder` gap (closed)
+
+The pair rows above are after one change: the points a local optimization refines on are those near the
+model **that pass the cheirality test**, as PoseLib's `get_inliers` takes them. Before, an outlier behind a
+camera that happened to lie within sqrt(5) thresholds of its epipolar line was refined on, and at 20 %
+inliers there are enough of them to pull the pose. Before → after, AUC@5 (PoseLib 0.7876, seeds 0.7589 ..
+0.8212):
+
+| set | cpu | cpu float | metal | webgpu (Dawn) |
+|---|---|---|---|---|
+| relpose_harder | 0.7387 → 0.7934 | 0.7199 → 0.7756 | 0.7180 → 0.7753 | → 0.7744 |
+| relpose_planar | 0.7948 → 0.8032 | 0.8004 → 0.8138 | 0.7710 → 0.7960 | 0.7606 → 0.7836 |
+| relpose_small_baseline | 0.9390 → 0.9408 | 0.9377 → 0.9397 | 0.9268 → 0.9357 | → 0.9358 |
+
+The success rate on `relpose_harder` rises with it (cpu 0.890 → 0.907, PoseLib 0.891); PnP is unchanged
+(its refinement already dropped points behind the camera). Speed is unchanged: on the relative-pose grid of
+`jpo bench` (batches 1, 32, 300; 200 and 2000 points; cpu, metal, auto) the median ratio new / old is 1.01,
+and the cells that differed by up to 10 % went either way when run again alternately.
+
+How it was found: from the same start poses on the same points, our local optimization and PoseLib's
+reached the same MSAC score once the cheirality test was in the point selection, and a slightly worse one
+without it; PoseLib's final poses scored better than ours by PoseLib's own MSAC function in 180 of the 187
+problems where ours were more than 0.5 degrees worse. Tried and dropped:
+
+- PoseLib's final bundle (Cauchy loss at 1 px over the inliers, after RANSAC): +0.0045 AUC@5 on
+  `relpose_harder` with the fix, nothing elsewhere, and 25 to 30 % slower on easy 2000-point pairs. On PnP
+  it was slightly worse than the truncated refinement alone (`pnp_harder` 0.9978 against 0.9981).
+- PoseLib's Levenberg-Marquardt (additive damping, Nielsen's update): a worse score from the same starts.
+- A local optimization per hypothesis instead of per round, and PoseLib's trigger (more inliers or a better
+  score than the best minimal model so far): no change on `relpose_harder`; on `relpose_planar` one
+  hypothesis per round reaches 0.8088 and a success rate of 0.845 at several times the run time, and one
+  local optimization per 32 or 64 hypotheses gives 0.805, so neither was kept.
+
+Left: `relpose_planar` stays under PoseLib's seed spread, AUC@5 0.803 against 0.817 (0.809 .. 0.826), and
+its success rate is 0.840 against PoseLib's worst seed 0.845 on the CPU (0.844 before; Metal 0.844, WebGPU
+0.832 before and after). The difference is how often the local optimization runs, above.
