@@ -1,14 +1,27 @@
-# The one automatic workflow: checks the links in the Markdown docs (README.md, PLAN.md,
-# RESULTS.md) whenever a change touches them. The build and test workflow (ci.yml) runs by hand.
+# Two jobs. "links" runs whenever a change touches the Markdown: links in README.md, PLAN.md, RESULTS.md and the
+# site's pages must point at files in the repository or answer. "site" builds the documentation site with the live
+# demo and the benchmark (docs/README.md), and publishes it to Cloudflare Pages when asked; it is started by hand:
+#
+#   gh workflow run docs                    # links, then the module and the site (artifact docs-html)
+#   gh workflow run docs -f deploy=true     # the same, then publish to Cloudflare Pages
+#
+# Deploying needs the repository secrets CLOUDFLARE_API_TOKEN (permission "Cloudflare Pages: Edit") and
+# CLOUDFLARE_ACCOUNT_ID, and a Pages project made for direct upload, named by the repository variable
+# CLOUDFLARE_PAGES_PROJECT (default "poselib-gpu"). The build and test workflow (ci.yml) runs by hand too.
 name: docs
 
 on:
   push:
     branches: [main]
-    paths: ["**.md", ".github/workflows/docs.yml"]
+    paths: ["**.md", "docs/**", "web/**", ".github/workflows/docs.yml"]
   pull_request:
-    paths: ["**.md", ".github/workflows/docs.yml"]
+    paths: ["**.md", "docs/**", "web/**", ".github/workflows/docs.yml"]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Publish to Cloudflare Pages"
+        type: boolean
+        default: false
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -16,6 +29,9 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  EMSCRIPTEN_VERSION: "7.0.0"
 
 jobs:
   links:
@@ -29,3 +45,43 @@ jobs:
         with:
           args: --no-progress './**/*.md'
           fail: true
+
+  site:
+    name: Site (build, and deploy when asked)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install requirements
+        run: |
+          python -m pip install -r docs/requirements.txt
+          sudo apt-get install -y ninja-build
+      - name: Install Emscripten
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+      - name: Fetch emdawnwebgpu
+        run: tools/fetch_webgpu.sh browser
+      - name: Build the WebAssembly module
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          emcmake cmake -S . -B build/wasm -G Ninja -DJPO_WEBGPU=ON -DJPO_BUILD_CLI=OFF -DJPO_BUILD_TESTS=OFF
+          cmake --build build/wasm
+      - name: Build the site (warnings are errors)
+        run: sphinx-build -W --keep-going -b html docs docs/_build/html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-html
+          path: docs/_build/html
+      - name: Deploy to Cloudflare Pages
+        if: inputs.deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >
+          npx --yes wrangler@4.162.0 pages deploy docs/_build/html
+          --project-name "${{ vars.CLOUDFLARE_PAGES_PROJECT || 'poselib-gpu' }}" --branch main

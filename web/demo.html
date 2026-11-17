@@ -1,0 +1,194 @@
+<!doctype html>
+<!-- The live demo: relative pose of real image pairs and the registration of a camera against a point cloud,
+     on the CPU backend (WebAssembly) and on WebGPU, in the visitor's browser. Serve the build's web/ folder
+     (python3 -m http.server) and open demo.html; the documentation site serves it as demo/ (docs/conf.py
+     fills the site:* markers). Data: samples/ (tools/demo_data.py). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>poselib-gpu demo</title>
+<meta name="description" content="Robust relative pose and camera registration on real KITTI matches, computed in the browser on the CPU and on WebGPU.">
+<!-- site:head -->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --fg: #1d1d1f; --muted: #66666b; --faint: #8e8e93; --line: #e3e3e0;
+    --accent: #0f766e; --accent-fg: #ffffff; --ok: #1a7f37; --warn: #9a6700; --bad: #c62828;
+    --inlier: #16a34a; --outlier: #dc2626; --cloud: #8e8e93; --empty: #ecebe8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121214; --panel: #1c1c1f; --fg: #f2f2f7; --muted: #a1a1a6; --faint: #7c7c82; --line: #333336;
+      --accent: #2dd4bf; --accent-fg: #062320; --ok: #4ac26b; --warn: #d29922; --bad: #ff6b6b;
+      --inlier: #4ade80; --outlier: #f87171; --cloud: #7c7c82; --empty: #2a2a2d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121214; --panel: #1c1c1f; --fg: #f2f2f7; --muted: #a1a1a6; --faint: #7c7c82; --line: #333336;
+    --accent: #2dd4bf; --accent-fg: #062320; --ok: #4ac26b; --warn: #d29922; --bad: #ff6b6b;
+    --inlier: #4ade80; --outlier: #f87171; --cloud: #7c7c82; --empty: #2a2a2d;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, sans-serif; margin: 0; }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  p { margin: 4px 0 10px; }
+  a { color: var(--accent); }
+  .lede { color: var(--muted); max-width: 86ch; margin-bottom: 18px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .field { margin: 0 0 14px; }
+  .field > .label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; margin-bottom: 4px; }
+  .field > .label output { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--faint); font-size: 12.5px; margin: 4px 0 0; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button, select { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
+  select { width: 100%; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--faint); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; padding: 7px 18px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex-wrap: wrap; }
+  .seg label { padding: 4px 10px; cursor: pointer; border-right: 1px solid var(--line); user-select: none; }
+  .seg label:last-child { border-right: 0; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label:has(input:checked) { background: var(--accent); color: var(--accent-fg); }
+  .seg label:has(input:disabled) { opacity: 0.45; cursor: default; }
+  .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tabs { margin-bottom: 16px; }
+  .tabs label { padding: 7px 16px; font-weight: 600; }
+  .check { display: flex; gap: 6px; align-items: center; margin: 2px 0; }
+  .check input { accent-color: var(--accent); }
+  .view { position: relative; }
+  canvas.image { width: 100%; height: auto; display: block; border-radius: 6px; background: var(--empty); cursor: crosshair; }
+  canvas.top { width: 100%; max-width: 440px; height: auto; display: block; border-radius: 6px; background: var(--empty); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+  th:first-child, td:first-child { text-align: left; }
+  td.l { text-align: left; white-space: normal; }
+  tr.shown td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  tbody tr { cursor: pointer; }
+  .scroll { overflow-x: auto; }
+  .status { color: var(--muted); min-height: 1.45em; margin: 10px 0 0; }
+  .status.bad { color: var(--bad); }
+  .notice { border-left: 3px solid var(--warn); }
+  .notice.bad { border-left-color: var(--bad); }
+  .note { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  footer.credit { color: var(--faint); font-size: 12.5px; max-width: 100ch; }
+</style>
+</head>
+<body>
+<!-- site:header -->
+<main>
+  <h1>Robust pose in your browser</h1>
+  <p class="lede">Real matches between KITTI street frames, and the poses LO-RANSAC finds in them, computed on this
+    page: on the CPU backend compiled to WebAssembly, and on your GPU through WebGPU. Add wrong matches and pixel
+    noise to see when the GPU pays off, and what the poses do when the matches get worse.</p>
+
+  <div id="notice" class="panel notice" hidden></div>
+
+  <div class="seg tabs" role="radiogroup" aria-label="Problem">
+    <label><input type="radio" name="tab" value="rel" checked> Relative pose of a pair</label>
+    <label><input type="radio" name="tab" value="abs"> Register a camera</label>
+  </div>
+
+  <div class="layout">
+    <div>
+      <section class="panel" aria-label="Problem and settings">
+        <div class="field" id="pair-field">
+          <label class="label" for="pair"><span>Image pair</span></label>
+          <select id="pair"></select>
+          <p class="hint" id="pair-note"></p>
+        </div>
+        <div class="field" id="cloud-field" hidden>
+          <div class="label"><span>Camera to register</span></div>
+          <p class="hint" id="cloud-note"></p>
+        </div>
+        <div class="field">
+          <label class="label" for="wrong"><span title="Random point pairs added to the real matches, as a share of all the matches the solver gets">Wrong matches added</span><output id="wrong-out" for="wrong"></output></label>
+          <input type="range" id="wrong" min="0" max="95" step="5" value="0">
+        </div>
+        <div class="field">
+          <label class="label" for="noise"><span title="Gaussian noise added to the real matches, standard deviation in pixels">Pixel noise</span><output id="noise-out" for="noise"></output></label>
+          <input type="range" id="noise" min="0" max="3" step="0.25" value="0">
+        </div>
+        <div class="field">
+          <div class="label"><span title="Copies of the problem in one call, each with its own draw of wrong matches and noise. A batch is how a reconstruction calls the library: every candidate pair, or every candidate image, at once.">Problems per call</span></div>
+          <div class="seg" role="radiogroup" aria-label="Problems per call" id="batch">
+            <label><input type="radio" name="batch" value="1" checked> 1</label>
+            <label><input type="radio" name="batch" value="16"> 16</label>
+            <label><input type="radio" name="batch" value="64"> 64</label>
+            <label><input type="radio" name="batch" value="256"> 256</label>
+          </div>
+        </div>
+        <div class="field">
+          <div class="label"><span>Backends</span></div>
+          <label class="check"><input type="checkbox" name="backend" value="cpu" checked> CPU (WebAssembly, one thread)</label>
+          <label class="check"><input type="checkbox" name="backend" value="webgpu" checked> WebGPU</label>
+          <label class="check"><input type="checkbox" name="backend" value="auto" checked> auto (CPU first, then the GPU for what is left)</label>
+        </div>
+        <div class="row">
+          <button type="button" class="primary" id="run" disabled>Run</button>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite">Loading…</p>
+      </section>
+
+      <section class="panel" aria-label="What is drawn">
+        <h2>Show</h2>
+        <label class="check"><input type="checkbox" id="show-in" checked> Inliers</label>
+        <label class="check"><input type="checkbox" id="show-out" checked> Outliers</label>
+        <label class="check" id="show-epi-row"><input type="checkbox" id="show-epi" checked> Epipolar lines</label>
+        <p class="hint" id="show-hint">Click a point in either image to draw its epipolar line in the other.</p>
+      </section>
+    </div>
+
+    <div>
+      <section class="panel" aria-label="Result">
+        <div id="rel-view" class="view">
+          <canvas class="image" id="rel-canvas" width="1241" height="760" aria-label="The two images, one above the other, with the matches between them"></canvas>
+        </div>
+        <div id="abs-view" class="two" hidden>
+          <canvas class="image" id="abs-canvas" width="1241" height="376" aria-label="The image to register, with its matches to the point cloud"></canvas>
+          <div>
+            <canvas class="top" id="top-canvas" width="600" height="600" aria-label="The point cloud and the cameras seen from above"></canvas>
+            <p class="note">From above: x to the right, the direction of travel up. Frames 100 and 106 made the
+              cloud; the open circle is where each backend put frame 103.</p>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </section>
+
+      <section class="panel" aria-label="Timings and poses">
+        <h2 id="results-title">Results</h2>
+        <div class="scroll">
+          <table id="results">
+            <thead></thead>
+            <tbody><tr><td class="l" colspan="7">Press Run.</td></tr></tbody>
+          </table>
+        </div>
+        <p class="note" id="results-note"></p>
+      </section>
+    </div>
+  </div>
+
+  <footer class="credit">
+    Images: the <a href="https://www.cvlibs.net/datasets/kitti/">KITTI</a> odometry benchmark and raw data
+    (Geiger, Lenz, Stiller and Urtasun), under <a href="https://creativecommons.org/licenses/by-nc-sa/3.0/">CC
+    BY-NC-SA 3.0</a>, for non-commercial use. Keypoints from ALIKED and matches from FlexGlue, computed once
+    ahead of time. <!-- site:refs -->
+  </footer>
+</main>
+<script type="module" src="demo.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Cloudflare Pages response headers. The module changes with a deployment and is revalidated after a day.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/lib/*
+  Cache-Control: public, max-age=86400, must-revalidate
+
+/samples/*
+  Cache-Control: public, max-age=604800

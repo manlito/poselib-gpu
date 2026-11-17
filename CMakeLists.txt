@@ -177,10 +177,12 @@ if(EMSCRIPTEN AND JPO_BUILD_WASM)
     -sALLOW_MEMORY_GROWTH
     -sMAXIMUM_MEMORY=4GB
     -sSTACK_SIZE=1MB)
-  foreach(f jpo.js test.html bench.html)
+  foreach(f jpo.js test.html bench.html demo.html demo.js benchmark.html)
     add_custom_command(TARGET jpo_wasm POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
                        "${CMAKE_CURRENT_SOURCE_DIR}/web/${f}" "${CMAKE_CURRENT_BINARY_DIR}/web/${f}")
   endforeach()
+  add_custom_command(TARGET jpo_wasm POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
+                     "${CMAKE_CURRENT_SOURCE_DIR}/web/samples" "${CMAKE_CURRENT_BINARY_DIR}/web/samples")
 endif()
 
 if(JPO_BUILD_CLI AND NOT EMSCRIPTEN)

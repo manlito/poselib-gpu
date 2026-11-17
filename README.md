@@ -12,7 +12,8 @@ keypoints           matches per pair    verified matches,        tracks, triangu
                                         relative poses, PnP      bundle adjustment
 ```
 
-Plan and decisions: [PLAN.md](PLAN.md). Measurements: [RESULTS.md](RESULTS.md).
+Plan and decisions: [PLAN.md](PLAN.md). Measurements: [RESULTS.md](RESULTS.md). Documentation site, live demo
+and benchmark page: [docs/README.md](docs/README.md).
 
 ## What it does
 
@@ -103,7 +104,7 @@ WebAssembly (Emscripten 7.0.0):
 
 ```sh
 emcmake cmake -S . -B build/wasm -G Ninja
-cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html, bench.html
+cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html, bench.html, demo.html, benchmark.html
 ```
 
 ## Command line

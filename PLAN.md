@@ -5,7 +5,8 @@ Minimal-dependency robust pose estimation for bundle-adjustment pipelines: relat
 `../just-matching` and `../just-ba` (C++ core, no PyTorch or other framework at run time). A fast CPU
 library first; hand-written Metal / CUDA / WebGPU kernels only for the work where a GPU is measured faster.
 
-Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 and M8 are not started.
+Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 is built and not yet published;
+M8 is not started.
 Sections above "Results" are the plan as it was followed; where the implementation differs from the first
 plan, "What changed while building" says how and why.
 
@@ -329,6 +330,17 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     against a small point cloud.
   - Benchmark page with fixed problem sets, numbers copied out as Markdown.
   - **Exit:** published; `sphinx-build -W` passes in the workflow.
+  - **Built, not published.** `docs/` (Sphinx + MyST, just-matching's theme) has the eight pages; `sphinx-build
+    -W` passes locally against a browser build, and the `site` job of the docs workflow (by hand) builds the
+    module and the site and deploys with `deploy=true`. Publishing waits for the Cloudflare secrets and for
+    the name (open question). The demo (`web/demo.html`) uses real data made once by `tools/demo_data.py`:
+    ALIKED keypoints and FlexGlue matches on three KITTI pairs (a turn of 19°, a corner passed twice 22°
+    apart, two look-alike streets with 40 wrong matches), and frame 103 registered against 611 points
+    triangulated from frames 100 and 106 (it lands 0.51 of the way between them). Wrong matches, noise and
+    batches of up to 256 copies are added in the page; at 50 % wrong matches and 64 pairs WebGPU is 12 times
+    faster than the WebAssembly CPU in the app's browser, with the same poses. The benchmark page
+    (`web/benchmark.html`) runs `jpo webcheck`'s six sets and three single problems and copies the table out
+    as Markdown with the browser and GPU. Checked in the app's Chromium only.
 
 - [ ] **M8 — v1.0**
   - CMake package (`find_package`), npm package, optional Python binding as just-ba's, tagged release with

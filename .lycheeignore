@@ -1,0 +1,3 @@
+# Pages that exist only in the built documentation site (docs/conf.py puts them there), linked from docs/*.md.
+demo/index\.html$
+benchmark/index\.html$
