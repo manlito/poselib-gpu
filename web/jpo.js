@@ -7,6 +7,7 @@
 //   // options: maxErrorPx, confidence, minIterations, maxIterations, refine, minInlierRatio (0 = off)
 //   // out.results[i] = { pose (Float64Array 7), score, medianTriAngleDeg, nInliers, iterations, status }
 //   // out.inliers: Uint8Array, one byte per match
+//   jpo.lastStats();   // { cpuHypotheses, gpuHypotheses } of the last call
 //
 // cameras: array of { model, params } with COLMAP's ids and parameter order. Poses: qw qx qy qz tx ty tz.
 import createJpo from "./jpo_wasm.js";
@@ -38,6 +39,18 @@ export class Jpo {
   destroy() {
     if (this.ctx) this.m._jpow_destroy(this.ctx);
     this.ctx = 0;
+  }
+
+  // Hypotheses drawn on the CPU and on the GPU by the last call: where `auto` sent the work.
+  lastStats() {
+    const ptr = this.m._malloc(16);
+    try {
+      this.m._jpow_last_stats(this.ctx, ptr);
+      const s = new Float64Array(this.m.HEAPU8.buffer, ptr, 2);
+      return { cpuHypotheses: s[0], gpuHypotheses: s[1] };
+    } finally {
+      this.m._free(ptr);
+    }
   }
 
   relativePose(problem, options) {

@@ -1,0 +1,247 @@
+<!doctype html>
+<!-- The benchmark page: fixed generated problem sets (the generator of the native tools, `jpo gen`), timed on
+     each backend in this browser, with the table copied out as Markdown. The documentation site serves it as
+     benchmark/ (docs/conf.py fills the site:* markers). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>poselib-gpu benchmark</title>
+<meta name="description" content="Fixed relative-pose and PnP problem sets, timed in your browser on the CPU backend and on WebGPU.">
+<!-- site:head -->
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --fg: #1d1d1f; --muted: #66666b; --faint: #8e8e93; --line: #e3e3e0;
+    --accent: #0f766e; --accent-fg: #ffffff; --ok: #1a7f37; --bad: #c62828; --warn: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121214; --panel: #1c1c1f; --fg: #f2f2f7; --muted: #a1a1a6; --faint: #7c7c82; --line: #333336;
+      --accent: #2dd4bf; --accent-fg: #062320; --ok: #4ac26b; --bad: #ff6b6b; --warn: #d29922;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121214; --panel: #1c1c1f; --fg: #f2f2f7; --muted: #a1a1a6; --faint: #7c7c82; --line: #333336;
+    --accent: #2dd4bf; --accent-fg: #062320; --ok: #4ac26b; --bad: #ff6b6b; --warn: #d29922;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, sans-serif; margin: 0; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  a { color: var(--accent); }
+  .lede { color: var(--muted); max-width: 86ch; margin-bottom: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .notice { border-left: 3px solid var(--warn); }
+  .notice.bad { border-left-color: var(--bad); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--faint); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; padding: 7px 18px; }
+  .status { color: var(--muted); }
+  .status.bad { color: var(--bad); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; }
+  th:first-child, td:first-child { text-align: left; }
+  td.best { font-weight: 700; }
+  .note { color: var(--muted); font-size: 12.5px; max-width: 100ch; }
+  textarea { width: 100%; min-height: 220px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg);
+             background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body>
+<!-- site:header -->
+<main>
+  <h1>Benchmark in your browser</h1>
+  <p class="lede">Nine fixed problem sets, generated on this page with the same generator and seeds as the native
+    command-line tools, solved on every backend this browser has: the CPU backend in WebAssembly on one thread,
+    WebGPU, and <code>auto</code>. The table can be copied out as Markdown, with the browser and GPU it ran on.</p>
+
+  <div id="notice" class="panel notice" hidden></div>
+
+  <section class="panel">
+    <div class="row">
+      <button type="button" class="primary" id="run" disabled>Run the benchmark</button>
+      <button type="button" id="copy" disabled>Copy as Markdown</button>
+      <span class="status" id="status" role="status" aria-live="polite">Loading…</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="scroll">
+      <table id="table"><thead></thead><tbody></tbody></table>
+    </div>
+    <p class="note">Each cell: milliseconds for the whole set, the best of three runs after one warm-up run (a
+      single run when one takes over a second), then how many problems were solved. Solved: a relative pose
+      within 5° of the true one in rotation and in the direction of travel, a camera within 1° in rotation;
+      for the sets with no true pose, a result with 30 inliers or fewer. Thresholds 1 px (relative) and 4 px
+      (PnP); noise 0.5 px and 1 px.</p>
+  </section>
+
+  <section class="panel" id="md-panel" hidden>
+    <label for="md" class="note">Markdown</label>
+    <textarea id="md" readonly></textarea>
+  </section>
+</main>
+<script type="module">
+const config = (() => {
+  const el = document.getElementById("demo-config");
+  return { lib: "./", ...(el ? JSON.parse(el.textContent) : {}) };
+})();
+const $ = (id) => document.getElementById(id);
+const setStatus = (t, bad = false) => { $("status").textContent = t; $("status").classList.toggle("bad", bad); };
+const notice = (t, bad = false) => { $("notice").textContent = t; $("notice").classList.toggle("bad", bad); $("notice").hidden = false; };
+
+// The sets of `jpo webcheck` (20 problems each) and three of their problems alone.
+const SETS = [
+  { name: "Relative pose, easy", kind: 0, count: 1, points: 1000, inliers: 0.7, noise: 0.5, seed: 201 },
+  { name: "Relative pose, hard", kind: 0, count: 1, points: 1000, inliers: 0.3, noise: 0.5, seed: 202 },
+  { name: "PnP, hard", kind: 1, count: 1, points: 1000, inliers: 0.1, noise: 1, seed: 205 },
+  { name: "Relative pose, easy", kind: 0, count: 20, points: 1000, inliers: 0.7, noise: 0.5, seed: 201 },
+  { name: "Relative pose, hard", kind: 0, count: 20, points: 1000, inliers: 0.3, noise: 0.5, seed: 202 },
+  { name: "Relative pose, no true pose", kind: 0, count: 20, points: 300, inliers: 0, noise: 0.5, seed: 203 },
+  { name: "PnP, easy", kind: 1, count: 20, points: 1000, inliers: 0.7, noise: 1, seed: 204 },
+  { name: "PnP, hard", kind: 1, count: 20, points: 1000, inliers: 0.1, noise: 1, seed: 205 },
+  { name: "PnP, no true pose", kind: 1, count: 20, points: 300, inliers: 0, noise: 1, seed: 206 },
+];
+const NAMES = { cpu: "CPU (WebAssembly)", webgpu: "WebGPU", auto: "auto" };
+let lib, module, ctxs = [], rows = [], env = "";
+
+function header() {
+  const cols = ["Set", "Problems", "Points", "Inliers", ...ctxs.map(([n]) => NAMES[n])];
+  $("table").tHead.innerHTML = "<tr>" + cols.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+}
+function addRow(row) {
+  const tr = $("table").tBodies[0].insertRow();
+  const best = Math.min(...row.cells.map((c) => c.ms));
+  [row.set.name, row.set.count, row.set.points, `${Math.round(100 * row.set.inliers)} %`].forEach((v) => (tr.insertCell().textContent = v));
+  for (const c of row.cells) {
+    const td = tr.insertCell();
+    td.textContent = `${fmt(c.ms)} · ${c.solved}/${row.set.count}`;
+    if (row.cells.length > 1 && c.ms === best) td.className = "best";
+  }
+}
+const fmt = (ms) => (ms < 10 ? ms.toFixed(2) : ms.toFixed(1));
+
+async function time(fn) {
+  await fn();
+  let best = Infinity, out;
+  for (let r = 0; r < 3; ++r) {
+    const t0 = performance.now();
+    out = await fn();
+    best = Math.min(best, performance.now() - t0);
+    if (best > 1000) break;
+  }
+  return [best, out];
+}
+
+function solved(set, problem, out) {
+  let n = 0;
+  out.results.forEach((r, i) => {
+    const gt = problem.gt.slice(7 * i, 7 * i + 7);
+    if (Number.isNaN(gt[0])) {
+      n += r.nInliers <= 30 ? 1 : 0;
+      return;
+    }
+    if (r.status !== 0) return;
+    const [rot, tr] = lib.poseErrors(set.kind, r.pose, gt);
+    n += (set.kind === 0 ? Math.max(rot, tr) < 5 : rot < 1) ? 1 : 0;
+  });
+  return n;
+}
+
+async function run() {
+  $("run").disabled = $("copy").disabled = true;
+  $("table").tBodies[0].innerHTML = "";
+  rows = [];
+  header();
+  try {
+    for (const [i, set] of SETS.entries()) {
+      const problem = lib.synth(module, set);
+      const opt = { maxErrorPx: set.kind === 0 ? 1 : 4 };
+      const cells = [];
+      for (const [name, jpo] of ctxs) {
+        setStatus(`Set ${i + 1} of ${SETS.length}, ${NAMES[name]}…`);
+        await new Promise((r) => setTimeout(r, 0));
+        const [ms, out] = await time(() => (set.kind === 0 ? jpo.relativePose(problem, opt) : jpo.absolutePose(problem, opt)));
+        cells.push({ name, ms, solved: solved(set, problem, out) });
+      }
+      const row = { set, cells };
+      rows.push(row);
+      addRow(row);
+    }
+    setStatus("Done.");
+    $("md").value = markdown();
+    $("md-panel").hidden = false;
+    $("copy").disabled = false;
+  } catch (e) {
+    setStatus(`Failed: ${e.message}`, true);
+    console.error(e);
+  }
+  $("run").disabled = false;
+}
+
+function markdown() {
+  const cols = ["set", "problems", "points", "inliers", ...ctxs.map(([n]) => `${n} ms (solved)`)];
+  const lines = [env, "", "| " + cols.join(" | ") + " |", "|" + cols.map((_, i) => (i ? "---:" : "---")).join("|") + "|"];
+  for (const r of rows) {
+    lines.push("| " + [r.set.name, r.set.count, r.set.points, `${Math.round(100 * r.set.inliers)} %`,
+      ...r.cells.map((c) => `${fmt(c.ms)} (${c.solved}/${r.set.count})`)].join(" | ") + " |");
+  }
+  return lines.join("\n") + "\n";
+}
+
+async function main() {
+  $("run").addEventListener("click", run);
+  $("copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("md").value);
+      setStatus("Copied.");
+    } catch {
+      $("md").select();
+      setStatus("Select the text below and copy it.");
+    }
+  });
+  if (typeof WebAssembly.Suspending !== "function") {
+    notice("This page needs a browser with JavaScript promise integration for WebAssembly: Chrome or Edge 137 or later.", true);
+    setStatus("Not supported in this browser.", true);
+    return;
+  }
+  try {
+    lib = await import(config.lib + "jpo.js");
+    module = await lib.createJpoModule({ locateFile: (f) => config.lib + f });
+    ctxs.push(["cpu", await lib.Jpo.create(module, { backend: lib.BACKEND.CPU })]);
+    let gpu = "no WebGPU";
+    if (navigator.gpu && module._jpow_backend_available(lib.BACKEND.WEBGPU)) {
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        const info = adapter?.info ?? {};
+        gpu = [info.vendor, info.architecture, info.description].filter(Boolean).join(" ") || "WebGPU";
+        ctxs.push(["webgpu", await lib.Jpo.create(module, { backend: lib.BACKEND.WEBGPU })]);
+        ctxs.push(["auto", await lib.Jpo.create(module, { backend: lib.BACKEND.AUTO })]);
+      } catch (e) {
+        notice(`WebGPU is not available here (${e.message}); only the CPU backend runs.`);
+      }
+    } else {
+      notice("This browser has no WebGPU; only the CPU backend runs.");
+    }
+    const ua = navigator.userAgentData?.brands?.filter((b) => !/Not.A.Brand/i.test(b.brand)).map((b) => `${b.brand} ${b.version}`).join(", ")
+      || navigator.userAgent;
+    env = `Browser: ${ua}; GPU: ${gpu}; ${navigator.hardwareConcurrency ?? "?"} logical CPUs (the WebAssembly backend uses one).`;
+    header();
+    $("run").disabled = false;
+    setStatus("Ready. The CPU column takes a few seconds.");
+  } catch (e) {
+    setStatus(`Failed to load: ${e.message}`, true);
+    console.error(e);
+  }
+}
+main();
+</script>
+</body>
+</html>
