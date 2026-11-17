@@ -40,6 +40,32 @@ holds the median triangulation angle of its inliers, which is what the choice of
 are COLMAP's models `SIMPLE_PINHOLE`, `PINHOLE`, `SIMPLE_RADIAL`, `RADIAL`, `OPENCV` and `OPENCV_FISHEYE`.
 See [include/jpo/jpo.h](include/jpo/jpo.h).
 
+### Several candidate images per round
+
+An incremental reconstruction can try K candidate images in one `jpo_absolute_pose` call and register
+every one whose result passes its own test on `n_inliers`. Set `min_inlier_ratio` so that candidates that
+cannot pass give up early instead of running to `max_iterations`:
+
+```c
+jpo_ransac_options opt;
+jpo_ransac_options_init(&opt);     /* min_inlier_ratio = 0: off */
+opt.max_error_px = 4.0;
+opt.min_inlier_ratio = 0.25;       /* at most log(1 - confidence) / log(1 - 0.25^3) = 585 iterations */
+jpo_absolute_pose(ctx, &candidates, &opt, results, inliers);
+/* a stopped candidate still returns its best model and real inlier count: compare n_inliers */
+```
+
+A problem with at least that inlier ratio has drawn an all-inlier sample with the requested confidence by
+then. On the M5 Pro a round of 8 to 32 candidates with a quarter to three quarters failing runs 3.7 to 10
+times faster than without the option, with every good candidate still solved, and `auto` sends the
+failing candidates of rounds of 16 or more to Metal when that is faster. On the NVIDIA laptop (6 cores,
+RTX 2070 Max-Q) the option gains 7 to 14 times on the CPU, and `auto` moves the failing candidates of
+every round to CUDA, 1.35 to 4.2 times faster than staying on the CPU (RESULTS.md). In the browser,
+where the CPU backend has one thread, `auto` moves rounds of two candidates or more to WebGPU after one CPU
+hypothesis each, within 8 % of WebGPU alone. The option also
+applies to `jpo_relative_pose`, but with five-point samples the cap is near 10,000 anyway, so leave it at 0
+for pairs. CLI: `--min-inlier-ratio r` for `jpo run` and `jpo bench`; JavaScript: `minInlierRatio`.
+
 ## Backends
 
 | Backend | Where | Notes |
@@ -77,7 +103,7 @@ WebAssembly (Emscripten 7.0.0):
 
 ```sh
 emcmake cmake -S . -B build/wasm -G Ninja
-cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html
+cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html, bench.html
 ```
 
 ## Command line
@@ -86,6 +112,7 @@ cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, 
 jpo gen relpose -o pairs.jpop --count 200 --points 1000 --inliers 0.3     # generated problems
 jpo run pairs.jpop --backend auto -o results.txt                          # poses, masks, accuracy
 jpo bench --backends cpu,metal,auto                                       # the timing grid
+jpo candidates --k 8,16,32 --failing 0.25,0.5,0.75 --ratio 0.25           # K-candidate rounds
 python3 tools/accuracy.py        # the accuracy sets, PoseLib against itself and against jpo
 python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with PoseLib alongside
 ```
@@ -100,6 +127,7 @@ python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with Pose
 | `backend_test <gpu>` | A GPU backend against the float CPU build: the same best hypothesis per round, the same problems solved. |
 | `incremental_test` | An incremental reconstruction of three generated scenes with just-ba. |
 | `web/test.html` | The generated sets in the browser, next to `jpo webcheck` natively. |
+| `web/bench.html` | `jpo bench` cells and candidate rounds in the browser, for the `auto` rule there (`tools/browser_bench.mjs` runs it in headless Chrome). |
 
 Hosted CI runs the CPU tests and the WebAssembly build. GPU tests are run by hand on the machine that has
 the GPU.

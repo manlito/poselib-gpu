@@ -7,6 +7,8 @@
 #include <emscripten/emscripten.h>
 
 #include "cli/synth.h"
+#include "core/api_internal.h"
+#include "core/estimator.h"
 #include "jpo/jpo.h"
 
 extern "C" {
@@ -27,8 +29,32 @@ EMSCRIPTEN_KEEPALIVE jpo_ctx* jpow_create(int backend, uint32_t seed, void* inst
 
 EMSCRIPTEN_KEEPALIVE void jpow_destroy(jpo_ctx* ctx) { jpo_destroy(ctx); }
 
+// Tuning only (web/bench.html), as the rule overrides of `jpo bench`: replaces numbers of the auto rule of
+// a context created with backend auto; a negative value keeps the built-in one. Returns 0, or -1 when the
+// context has no GPU to route to.
+EMSCRIPTEN_KEEPALIVE int jpow_set_route(jpo_ctx* ctx, double cpu_iterations, double gpu_min_remaining,
+                                        double gpu_min_total, double one_round_cpu_iterations,
+                                        double one_round_gpu_min_remaining, double one_round_gpu_min_total) {
+  jpo::Route& r = jpo::ctx_route(ctx);
+  if (!r.gpu) return -1;
+  if (cpu_iterations >= 0) r.cpu_iterations = static_cast<uint32_t>(cpu_iterations);
+  if (gpu_min_remaining >= 0) r.gpu_min_remaining = static_cast<uint32_t>(gpu_min_remaining);
+  if (gpu_min_total >= 0) r.gpu_min_total = static_cast<uint64_t>(gpu_min_total);
+  if (one_round_cpu_iterations >= 0) r.one_round_cpu_iterations = static_cast<uint32_t>(one_round_cpu_iterations);
+  if (one_round_gpu_min_remaining >= 0) r.one_round_gpu_min_remaining = static_cast<uint32_t>(one_round_gpu_min_remaining);
+  if (one_round_gpu_min_total >= 0) r.one_round_gpu_min_total = static_cast<uint64_t>(one_round_gpu_min_total);
+  return 0;
+}
+
+// The hypotheses the last call drew on the CPU and on the GPU (doubles: cpu, gpu), as `jpo bench --csv`.
+EMSCRIPTEN_KEEPALIVE void jpow_last_stats(jpo_ctx* ctx, double* out) {
+  const jpo::BatchStats& st = jpo::ctx_stats(ctx);
+  out[0] = static_cast<double>(st.cpu_hypotheses);
+  out[1] = static_cast<double>(st.gpu_hypotheses);
+}
+
 // cameras: 9 doubles each (model, then 8 parameters). options: max_error_px, confidence,
-// min_iterations, max_iterations, refine. results: 12 doubles per problem (pose 7, score,
+// min_iterations, max_iterations, refine, min_inlier_ratio. results: 12 doubles per problem (pose 7, score,
 // median_tri_angle_deg, n_inliers, iterations, status).
 static void unpack(const double* cameras, uint32_t n, std::vector<jpo_camera>* out) {
   out->resize(n);
@@ -46,6 +72,7 @@ static jpo_ransac_options options(const double* o) {
   opt.min_iterations = static_cast<uint32_t>(o[2]);
   opt.max_iterations = static_cast<uint32_t>(o[3]);
   opt.refine = o[4] != 0.0;
+  opt.min_inlier_ratio = o[5];
   return opt;
 }
 static void pack(const std::vector<jpo_pose_result>& res, double* out) {

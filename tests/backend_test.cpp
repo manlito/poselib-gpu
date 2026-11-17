@@ -10,10 +10,12 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "backend/backend.h"
 #include "cli/synth.h"
+#include "core/api_internal.h"
 #include "core/geometry.h"
 #include "core/pool.h"
 #include "jpo/jpo.h"
@@ -205,6 +207,140 @@ int main(int argc, char** argv) {
       }
     }
   }
+  // ---- 3. min_inlier_ratio, on the GPU alone and under auto ----
+  // Candidates with no model stop at the cap; the good ones are solved as without the option.
+  for (uint32_t kind = 0; kind < 2; ++kind) {
+    jposynth::Spec spec;
+    spec.kind = kind;
+    spec.count = 12;
+    spec.points = 600;
+    spec.noise_px = kind == 0 ? 0.5 : 1.0;
+    spec.inlier_ratio = 0.6;
+    spec.seed = 90 + kind;
+    jpofile::ProblemSet set = jposynth::make_set(spec);
+    spec.inlier_ratio = 0.0;
+    spec.seed += 10;
+    const jpofile::ProblemSet none = jposynth::make_set(spec);
+    set.problems.insert(set.problems.end(), none.problems.begin(), none.problems.end());
+    const jpofile::Flat flat = jpofile::flatten(set);
+    jpo_ransac_options opt[2];
+    jpo_ransac_options_init(&opt[0]);
+    opt[0].max_error_px = kind == 0 ? 1.0 : 4.0;
+    opt[1] = opt[0];
+    opt[1].min_inlier_ratio = 0.25;
+    const uint32_t cap = static_cast<uint32_t>(
+        std::ceil(std::log(1.0 - opt[1].confidence) / std::log1p(-std::pow(0.25, kind == 0 ? 5 : 3))));
+    for (int route = 0; route < 2; ++route) {
+      jpo_config cfg;
+      jpo_config_init(&cfg);
+      cfg.backend = route == 0 ? id : JPO_BACKEND_AUTO;
+      jpo_ctx* ctx = jpo_create(&cfg);
+      if (!ctx) {
+        std::printf("FAIL jpo_create: %s\n", jpo_last_error());
+        return 1;
+      }
+      int solved[2] = {0, 0}, stopped = 0;
+      for (int o = 0; o < 2; ++o) {
+        std::vector<jpo_pose_result> res(set.problems.size());
+        std::vector<uint8_t> inl(flat.offsets.back());
+        int rcode;
+        if (kind == 0) {
+          const jpo_pairs p = flat.pairs();
+          rcode = jpo_relative_pose(ctx, &p, &opt[o], res.data(), inl.data());
+        } else {
+          const jpo_resections r = flat.resections();
+          rcode = jpo_absolute_pose(ctx, &r, &opt[o], res.data(), inl.data());
+        }
+        if (rcode != 0) {
+          std::printf("FAIL estimator: %s\n", jpo_last_error());
+          return 1;
+        }
+        for (size_t i = 0; i < res.size(); ++i) {
+          if (!std::isfinite(set.problems[i].gt_pose[0])) {
+            if (o == 1) stopped += res[i].iterations == cap ? 1 : 0;
+            continue;
+          }
+          double rot = 180, tr = 180;
+          if (res[i].status == JPO_OK) jposynth::pose_errors(kind, res[i].pose, set.problems[i].gt_pose, &rot, &tr);
+          solved[o] += (kind == 0 ? std::max(rot, tr) : rot) < (kind == 0 ? 5.0 : 1.0) ? 1 : 0;
+        }
+      }
+      std::printf("%s min_inlier_ratio, %s, %s: good solved %d/12 off, %d/12 on; %d of 12 without a model stopped at %u\n",
+                  name.c_str(), jpo_backend_name(ctx), kind ? "pnp" : "relpose", solved[0], solved[1], stopped, cap);
+      if (solved[1] != solved[0] || stopped != 12) {
+        std::printf("FAIL: min_inlier_ratio\n");
+        ++fail;
+      }
+      jpo_destroy(ctx);
+    }
+  }
+
+  // ---- 4. auto with a one-round budget (each backend's rule, PLAN.md "The auto rule") ----
+  // min_inlier_ratio 0.25 on resections caps them at 585 iterations, one GPU round. Metal: a round of 32
+  // candidates with 24 failing moves the failing ones to the GPU after 64 CPU iterations; 8 candidates,
+  // or 32 good ones, never could need 5,000 hypotheses there and stay on the CPU. CUDA: 1,000 hypotheses
+  // after 16 CPU iterations, so 6 failing candidates move too and one alone stays; a good candidate that
+  // has not found its model by then may move with them (gpu = -1: either way, only solved and capped count).
+  // WebGPU natively (more than two CPU threads) has Metal's numbers.
+  struct Case {
+    uint32_t good, failing;
+    int gpu;  // 1 moves, 0 stays, -1 either
+  };
+  std::vector<Case> one_round_cases;
+  if (id == JPO_BACKEND_METAL || (id == JPO_BACKEND_WEBGPU && std::thread::hardware_concurrency() > 2))
+    one_round_cases = {{8, 24, 1}, {2, 6, 0}, {32, 0, 0}};
+  if (id == JPO_BACKEND_CUDA) one_round_cases = {{8, 24, 1}, {2, 6, 1}, {0, 1, 0}, {32, 0, -1}};
+  if (!one_round_cases.empty()) {
+    jpo_config cfg;
+    jpo_config_init(&cfg);
+    jpo_ctx* ctx = jpo_create(&cfg);
+    jpo_ransac_options opt;
+    jpo_ransac_options_init(&opt);
+    opt.max_error_px = 4.0;
+    opt.min_inlier_ratio = 0.25;
+    for (const Case& c : one_round_cases) {
+      jposynth::Spec spec;
+      spec.kind = 1;
+      spec.points = 600;
+      spec.noise_px = 1.0;
+      spec.count = c.good;
+      spec.inlier_ratio = 0.6;
+      spec.seed = 120;
+      jpofile::ProblemSet set = jposynth::make_set(spec);
+      spec.count = c.failing;
+      spec.inlier_ratio = 0.0;
+      spec.seed = 121;
+      const jpofile::ProblemSet none = jposynth::make_set(spec);
+      set.problems.insert(set.problems.end(), none.problems.begin(), none.problems.end());
+      const jpofile::Flat flat = jpofile::flatten(set);
+      const jpo_resections r = flat.resections();
+      std::vector<jpo_pose_result> res(set.problems.size());
+      if (jpo_absolute_pose(ctx, &r, &opt, res.data(), nullptr) != 0) {
+        std::printf("FAIL estimator: %s\n", jpo_last_error());
+        return 1;
+      }
+      const jpo::BatchStats& st = jpo::ctx_stats(ctx);
+      int solved = 0, capped = 0;
+      for (size_t i = 0; i < res.size(); ++i) {
+        if (i >= c.good) {
+          capped += res[i].iterations == 585 ? 1 : 0;
+          continue;
+        }
+        double rot = 180, tr = 180;
+        if (res[i].status == JPO_OK) jposynth::pose_errors(1, res[i].pose, set.problems[i].gt_pose, &rot, &tr);
+        solved += rot < 1.0 ? 1 : 0;
+      }
+      std::printf("%s auto, %u good + %u failing capped resections: gpu hypotheses %llu, solved %d/%u, capped %d/%u\n",
+                  name.c_str(), c.good, c.failing, static_cast<unsigned long long>(st.gpu_hypotheses), solved, c.good,
+                  capped, c.failing);
+      if ((c.gpu >= 0 && (st.gpu_hypotheses > 0) != (c.gpu == 1)) || solved != static_cast<int>(c.good) || capped != static_cast<int>(c.failing)) {
+        std::printf("FAIL: one-round routing\n");
+        ++fail;
+      }
+    }
+    jpo_destroy(ctx);
+  }
+
   std::printf(fail ? "backend_test %s: FAILED\n" : "backend_test %s: passed\n", name.c_str());
   return fail ? 1 : 0;
 }

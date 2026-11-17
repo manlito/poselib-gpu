@@ -137,7 +137,8 @@ void jpo_destroy(jpo_ctx*);
 - Inputs name a camera per image (`model`, intrinsics as doubles), shared across problems where equal.
 - `jpo_ransac_options`: `max_error_px` (default 1 for pairs, 4 for resections), `confidence` (0.9999),
   `min_iterations` (100), `max_iterations` (10000), `refine` (on by default). Iterations, not rounds: the
-  numbers mean what they mean in PoseLib, on every backend.
+  numbers mean what they mean in PoseLib, on every backend. `min_inlier_ratio` (off by default, added
+  after M6) gives up on problems below a given inlier ratio; see "K candidates per round" below.
 - Results per problem, one struct for both estimators: pose (7 doubles), `n_inliers`, `score` (MSAC),
   `iterations`, `status`, and `median_tri_angle_deg` (relative pose; 0 otherwise); per point an inlier byte.
 - Host buffers only. Device buffers as input were to be added only if the copy showed up in a profile; it
@@ -296,7 +297,11 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
   - **Done, with less tuning than planned.** Tables for PoseLib, CPU, Metal and CUDA in RESULTS.md, and the
     `auto` rule per backend below. Device inputs were not added (no copy showed in a profile). Known gap in
     `auto`: resections of 200 points at 30 % inliers stop near 1000 iterations, under the rule's threshold, so `auto`
-    stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches.
+    stays on the CPU where the GPU alone is 3 times (Metal) to 7 times (CUDA) faster on batches. On CUDA
+    the threshold is now 512 with a 128-iteration CPU phase: those batches run 1.8 to 4.9 times faster,
+    1.5 to 1.6 times behind CUDA alone on 200 points and ahead of it on 2000. Metal has the same rule
+    since: batches of 300 and more run at Metal alone's speed on 200 points (3000 of them: 145 → 45 ms)
+    and beat it on 2000; 32 of them still stay on the CPU (under the 50,000 total).
 
 - [x] **M6 — Runs in the browser**
   - The CPU backend in WebAssembly first (one thread): the whole API works there with no GPU.
@@ -308,7 +313,11 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     times slower than one native thread. The WGSL port (hand-written, 1600 lines) passes `backend_test
     webgpu` natively through Dawn, including with a device supplied by the caller, and runs in the browser
     through Emscripten: 20 to 40 times faster than the WebAssembly CPU on hard sets (`auto` 13 to 20 times), about equal on easy
-    ones (RESULTS.md). Browser timings come from one run in one Chromium; Safari and Firefox were not run.
+    ones (RESULTS.md). The browser's `auto` rule was re-tuned since (`web/bench.html` in headless Chrome,
+    `tools/browser_bench.mjs`): a 32-iteration CPU phase, and a single CPU hypothesis for a one-round
+    budget, because WebGPU alone wins from about four problems up there; the bench grid takes 1.6 s
+    instead of 3.0, candidate rounds come within 8 % of WebGPU alone. Browser timings come from Chrome on
+    one machine; Safari and Firefox were not run.
 
 - [ ] **M7 — Public docs and demo** (Cloudflare Pages)
   - Site: build, quick start, concepts (rounds, precision, conventions), C API, accuracy and speed, in the
@@ -337,15 +346,77 @@ need `gpu_min_total` hypotheses between them (`src/core/auto_rule.cpp`).
 
 | Backend | Measured on | cpu_iterations | gpu_min_remaining | gpu_min_total |
 |---|---|---|---|---|
-| Metal | M5 Pro, 18 threads | 256 | 1024 | 50,000 |
-| CUDA | RTX 2070 Max-Q, i7-9750H | 256 | 1024 | 5,000 |
-| WebGPU, native | M5 Pro through Dawn | 256 | 1024 | 2,800 per CPU thread |
-| WebGPU, browser (one thread) | M5 Pro, Chromium | 256 | 256 | 2,800 |
+| Metal | M5 Pro, 18 threads | 128 | 512 | 50,000 |
+| CUDA | RTX 2070 Max-Q, i7-9750H | 128 | 512 | 5,000 |
+| WebGPU, native | M5 Pro through Dawn | 128 | 512 | 2,800 per CPU thread |
+| WebGPU, browser (one or two threads) | M5 Pro, headless Chrome | 32 | 32 | 1,000 |
+
+A call whose iteration budget fits in one GPU round (`max_iterations`, or the cap of `min_inlier_ratio`,
+at most 2048; resections at r = 0.25 draw at most 585) has its own three numbers, because whatever moves then
+takes exactly one dispatch, while the numbers above were measured on problems that take several. They are
+used only when the batch could reach the total at all (active problems x (budget − CPU phase) ≥ the total);
+otherwise, and on backends without them, the numbers above apply.
+
+| Backend | one-round cpu_iterations | gpu_min_remaining | gpu_min_total |
+|---|---|---|---|
+| Metal | 64 | 256 | 5,000 |
+| CUDA | 16 | 128 | 1,000 |
+| WebGPU, native | 64 | 256 | 5,000 |
+| WebGPU, browser | 1 | 1 | 1,000 |
 
 The numbers belong to those machines. Another CPU/GPU pair would want its own; nothing calibrates at run time.
 
+### K candidates per round: min_inlier_ratio
+
+The incremental reconstruction this library is for registers images in rounds: K candidate images go to
+`jpo_absolute_pose` as one batch, and every one that passes the caller's test is registered. The batch
+call already did that; what it lacked was a cheap way to give up on candidates that cannot pass, which ran
+to `max_iterations` (10,000) and made up nearly all the time of a round.
+
+- `jpo_ransac_options.min_inlier_ratio` = r, in [0, 1); 0 is off and is what `jpo_ransac_options_init`
+  gives. When set, every problem of the call draws at most log(1 - confidence) / log(1 - r^s) iterations
+  (s = 3 absolute, 5 relative), clamped to [min_iterations, max_iterations]: 585 for resections at r = 0.25
+  and the default confidence, 9427 for pairs, where it saves almost nothing, so callers leave it at 0 there.
+- It is one rule in the host driver (`src/core/estimator.cpp`, `iteration_cap`), so every backend has it
+  without kernel changes. The cap replaces `max_iterations` everywhere the driver uses it: the stopping
+  rule, the remaining work `auto` counts before moving a problem to the GPU, and the early rejection floor.
+- A problem stopped by the cap returns the best model it found with its real inlier count and the usual
+  status. There is no status code for it; the caller compares `n_inliers`, as it already does.
+- A problem just above r may stop before its own stopping rule would (that rule asks three times the
+  bound). Problems well above r stop by their own rule first and come back unchanged (`core_test`).
+- Measured (RESULTS.md, "K candidates per registration round"): K = 8 to 32 resections with a quarter to
+  three quarters failing, 4 to 10 times faster per round on the CPU and 4 to 6 times on Metal, with every
+  good candidate still solved. One batch is 1.5 to 5.7 times faster than K calls on the CPU.
+- Under the old `auto` rule these capped rounds never left the CPU (329 iterations left per candidate after
+  the 256-iteration CPU phase, under `gpu_min_remaining`), where Metal alone was up to 2 times faster. The
+  one-round numbers above fix most of that: K = 32 with three quarters failing 2.96 → 1.97 ms (Metal alone
+  1.50, CPU 3.02), with `auto` within noise of the CPU or faster elsewhere. Calls with the default budget
+  route exactly as before (all 112 cells of the grid checked). Lowering the general thresholds instead was
+  tried and dropped: it closed the known gap on 200-point resections at 30 % but slowed single easy
+  problems and small hard batches (RESULTS.md, "`auto` with a one-round budget").
+- On CUDA (RTX 2070 Max-Q against 6 cores) the option makes a round 7 to 14 times faster on the CPU and 4
+  to 7 times on CUDA, and CUDA alone then beats the CPU 1.5 to 4.4 times in every round with failing
+  candidates. Its one-round numbers (16 CPU iterations, 128 remaining, 1,000 in total) make `auto` 1.35 to
+  4.2 times faster than the old rule there and 1.1 to 1.3 times behind CUDA alone; rounds with no failing
+  candidate are 0.3 to 0.6 ms behind the CPU at K = 16 to 32. Default budgets route as before (112 cells).
+  On the general resection grid with the option set, hard batches go from the CPU's speed to near CUDA's
+  (RESULTS.md, "`auto` with a one-round budget on CUDA").
+- Left to the pipeline: ranking candidates, the acceptance threshold, building 2D-3D matches from tracks,
+  and stopping after N successes. World points are copied per candidate (under 1 MB per round); there is
+  no indexed form.
+
 ### What changed while building
 
+- **The CPU phase of `auto` never ends inside the CPU's first round, and only cuts problems that could
+  move.** Cutting the widened first round of a small batch left threads idle and cost easy problems a
+  second round; a problem that cannot reach `gpu_min_remaining` keeps its whole round (routing unchanged).
+  This made a 128-iteration phase pay on CUDA and Metal (RESULTS.md, "CPU phase of 128 on CUDA", "CPU
+  phase of 128 and 512 remaining on Metal").
+- **The browser has its own `auto` numbers**, not Metal's per thread: on one WebAssembly thread WebGPU
+  alone wins from about four problems up, so the CPU phase is its first round and a one-round budget
+  moves after one hypothesis (RESULTS.md, "`auto` in the browser"). Timed in headless Chrome
+  (`tools/browser_bench.mjs`), because the app's browser pane is throttled whenever its window is out of
+  view.
 - **Iterations, not rounds, in the options and results.** They mean what they mean in PoseLib on every backend.
 - **Hypotheses are scored as poses with a cheirality test**, not as essential matrices (PoseLib's
   behaviour). Scoring E alone lost planar scenes.
@@ -366,7 +437,22 @@ The numbers belong to those machines. Another CPU/GPU pair would want its own; n
 - Real images, real matches and the comparison with COLMAP (M0, M2): nothing to run them on here.
 - The accuracy shortfall on the hardest relative-pose set (M1).
 - Windows, and the hosted CI workflow, have never run.
-- Browsers other than one Chromium; the browser timings are a single run.
+- Browsers other than Chrome; the browser rule was measured in headless Chrome on one machine, and its
+  two-thread branch (the same numbers) was not measured at all.
+- In the browser `auto` is still up to 1.5 times slower than WebGPU alone on hard resection batches (100 x
+  2000 at 30 %: 60.8 against 40.6 ms), and 7 to 22 % on candidate rounds without `min_inlier_ratio`: the
+  CPU's first round of 32 iterations is the shortest phase it has on one thread.
+- `auto` with `min_inlier_ratio` set is still 0.15 to 0.5 ms per round behind Metal alone at K = 16 to 32
+  with failing candidates (the 64-iteration CPU phase), and 0.1 to 0.9 ms behind CUDA alone (the
+  16-iteration phase); on CUDA, rounds with no failing candidate at K = 16 to 32 are 0.3 to 0.6 ms behind
+  the CPU.
+- On CUDA, single or paired easy problems of 2000 points are up to 0.3 ms slower than before the CPU phase
+  lasted the CPU's first round (pnp 1 x 2000 at 70 %: 1.37 → 1.69 ms): that round is 384 hypotheses where
+  an easy problem needs about 256.
+- On Metal, easy batches of 4 to 8 are up to 0.26 ms slower under the 128 / 512 rule (the phase cuts
+  problems that may still need 640 iterations), and 32 resections of 200 points at 30 % stay on the CPU,
+  2.2 times behind Metal alone: a lower total would move them but slows small pair batches, so the total
+  would have to depend on the kind of problem.
 
 ## Development machines
 
