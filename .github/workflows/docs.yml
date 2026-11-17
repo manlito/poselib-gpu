@@ -1,6 +1,8 @@
 # Two jobs. "links" runs whenever a change touches the Markdown: links in README.md, PLAN.md, RESULTS.md and the
 # site's pages must point at files in the repository or answer. "site" builds the documentation site with the live
-# demo and the benchmark (docs/README.md), and publishes it to Cloudflare Pages when asked; it is started by hand:
+# demo and the benchmark (docs/README.md) once the links pass. It runs on every push to main that touches the
+# paths below, and publishes the site to Cloudflare Pages; it does not run on pull requests. It can also be started
+# by hand, on any branch:
 #
 #   gh workflow run docs                    # links, then the module and the site (artifact docs-html)
 #   gh workflow run docs -f deploy=true     # the same, then publish to Cloudflare Pages
@@ -47,8 +49,9 @@ jobs:
           fail: true
 
   site:
-    name: Site (build, and deploy when asked)
-    if: github.event_name == 'workflow_dispatch'
+    name: Site (build, and deploy on main or when asked)
+    needs: links
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +81,7 @@ jobs:
           name: docs-html
           path: docs/_build/html
       - name: Deploy to Cloudflare Pages
-        if: inputs.deploy
+        if: github.event_name == 'push' || inputs.deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
