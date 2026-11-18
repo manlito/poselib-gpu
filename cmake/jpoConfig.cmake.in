@@ -1,0 +1,56 @@
+# find_package(jpo [COMPONENTS cpu cuda metal webgpu]): target jpo::jpo. A component is a backend that
+# this build of jpo has; jpo_BACKENDS lists them all.
+@PACKAGE_INIT@
+
+# A static jpo is C++ inside: the project that links it needs C++ enabled, even when its own code is C,
+# so that CMake links with the C++ linker and runtime.
+if(@JPO_CONFIG_STATIC@)
+  get_property(jpo_languages GLOBAL PROPERTY ENABLED_LANGUAGES)
+  if(NOT CXX IN_LIST jpo_languages)
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+        "jpo is a static C++ library: add CXX to the project's languages (project(<name> LANGUAGES C CXX))")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+  endif()
+  unset(jpo_languages)
+endif()
+
+include(CMakeFindDependencyMacro)
+if(@JPO_CONFIG_THREADS@)
+  find_dependency(Threads)
+endif()
+if(@JPO_CONFIG_CUDA@)
+  find_dependency(CUDAToolkit)
+endif()
+if(@JPO_CONFIG_DAWN@)
+  # The Dawn release jpo was built against, unless the consumer points Dawn_DIR elsewhere.
+  find_dependency(Dawn CONFIG HINTS "@JPO_CONFIG_DAWN_DIR@")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/jpoTargets.cmake")
+if(@JPO_CONFIG_EMDAWNWEBGPU@)
+  # Emscripten: the WebGPU port of the Dawn release jpo was built against (the same release, or the
+  # module will not link). Point JPO_EMDAWNWEBGPU_DIR at its unpacked emdawnwebgpu_pkg.
+  set(JPO_EMDAWNWEBGPU_DIR "@JPO_EMDAWNWEBGPU_DIR@" CACHE PATH "The unpacked emdawnwebgpu_pkg of a Dawn release")
+  if(NOT EXISTS "${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py")
+    set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE
+        "no emdawnwebgpu.port.py in JPO_EMDAWNWEBGPU_DIR (${JPO_EMDAWNWEBGPU_DIR})")
+    set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+    return()
+  endif()
+  set_property(TARGET jpo::jpo APPEND PROPERTY INTERFACE_COMPILE_OPTIONS
+               "--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py")
+  set_property(TARGET jpo::jpo APPEND PROPERTY INTERFACE_LINK_OPTIONS
+               "--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py")
+endif()
+
+set(jpo_BACKENDS "@JPO_CONFIG_BACKENDS@")
+foreach(jpo_backend IN ITEMS cpu cuda metal webgpu)
+  if(jpo_backend IN_LIST jpo_BACKENDS)
+    set(jpo_${jpo_backend}_FOUND TRUE)
+  else()
+    set(jpo_${jpo_backend}_FOUND FALSE)
+  endif()
+endforeach()
+unset(jpo_backend)
+check_required_components(jpo)

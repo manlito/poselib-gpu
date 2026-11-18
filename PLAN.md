@@ -6,7 +6,7 @@ Minimal-dependency robust pose estimation for bundle-adjustment pipelines: relat
 library first; hand-written Metal / CUDA / WebGPU kernels only for the work where a GPU is measured faster.
 
 Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 is published at
-<https://poselib-gpu.pages.dev>; M8 is not started.
+<https://poselib-gpu.pages.dev>; M8 is under way (the CMake package is done).
 Sections above "Results" are the plan as it was followed; where the implementation differs from the first
 plan, "What changed while building" says how and why.
 
@@ -348,6 +348,26 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     the benchmark numbers.
   - A link test: one WebAssembly module and one native binary holding just-keypoints, just-matching,
     poselib-gpu and just-ba on one GPU device.
+  - **CMake package: done.** `cmake --install` puts `libjpo` (static, or shared with
+    `-DBUILD_SHARED_LIBS=ON`), `jpo/jpo.h`, the `jpo` tool and `lib/cmake/jpo` in the prefix;
+    `find_package(jpo)` gives `jpo::jpo` (also the `add_subdirectory` name now), with the backends as
+    components and in `jpo_BACKENDS`. The package finds again what the target names: the CUDA runtime,
+    now linked by name (`CUDA::cudart_static`) so that a consumer links it without enabling CUDA; Dawn,
+    from the release it was built against; and threads, which Dawn's own package names without finding.
+    Metal is linked as `-framework Metal`, not the SDK path. Under Emscripten the emdawnwebgpu port and
+    `-fwasm-exceptions` are added by `jpoConfig.cmake`, from `JPO_EMDAWNWEBGPU_DIR`, not this machine's
+    path. A static jpo needs C++ enabled in the consumer, even in a C project; the package says so
+    instead of failing at link time. The `package` test installs into a fresh prefix and builds the C
+    project `tests/package` against it, registering a camera on every backend: passed on the M5 Pro
+    (Metal, WebGPU; static and shared) and on the NVIDIA laptop (CUDA; static and shared). The same
+    project built with Emscripten against the installed wasm package runs on the CPU under Node (no
+    WebGPU there). Hosted CI runs it on Ubuntu, macOS and Windows (Visual Studio generator), CPU only:
+    passed on all three.
+  - **Link test: blocked on the siblings.** Of the four libraries only just-keypoints and poselib-gpu
+    take the caller's WebGPU device (`webgpu_instance` / `webgpu_device` in their configs);
+    just-matching (`jmt_config.device` is an index) and just-ba (`backends/webgpu`, off by default) create
+    their own. None of the four installs a CMake package but this one; the link test builds the others
+    from source next to this repository, as `tests/incremental` does with just-ba.
 
 ## Results
 

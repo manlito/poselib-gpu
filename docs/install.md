@@ -9,13 +9,37 @@ cmake --build build/release
 ctest --test-dir build/release
 ```
 
-This gives the static library `libjpo.a`, the single public header `jpo/jpo.h` and the `jpo` command-line tool.
-To use the library from another CMake project, add its folder and link the target:
+This gives the static library `libjpo.a`, the single public header `jpo/jpo.h` and the `jpo` command-line tool
+(`-DBUILD_SHARED_LIBS=ON` gives a shared library instead).
+
+## Using it from another CMake project
+
+Install the build, then find the package:
+
+```bash
+cmake --install build/release --prefix /opt/jpo
+```
+
+```cmake
+find_package(jpo 0.1 REQUIRED)               # CMAKE_PREFIX_PATH=/opt/jpo
+target_link_libraries(my_app PRIVATE jpo::jpo)
+```
+
+The components are the backends this build has (`cpu`, `metal`, `cuda`, `webgpu`), and `jpo_BACKENDS` lists them,
+so `find_package(jpo REQUIRED COMPONENTS cuda)` fails on a build without CUDA. The package finds again what the
+library needs: the CUDA runtime (static builds), Dawn (WebGPU, from the release it was built against unless
+`Dawn_DIR` says otherwise) and the system's threads. A project that links the static library needs C++ enabled,
+even when its own code is C (`project(my_app LANGUAGES C CXX)`). A build tree works as well
+(`-Djpo_DIR=build/release`), as does adding the folder:
 
 ```cmake
 add_subdirectory(poselib-gpu)
-target_link_libraries(my_app PRIVATE jpo)
+target_link_libraries(my_app PRIVATE jpo::jpo)
 ```
+
+Under Emscripten the installed package adds emdawnwebgpu's port to whatever links it. It looks for the port where
+it was at build time; `-DJPO_EMDAWNWEBGPU_DIR=<emdawnwebgpu_pkg>` points it elsewhere (the same Dawn release).
+The module must also use native wasm exceptions, which the package adds (`-fwasm-exceptions`).
 
 ## Backends
 
@@ -67,5 +91,6 @@ jpo bench --backends cpu,metal,auto                                       # the 
 | `precision_test` | The float32 build of the kernels against the double build. |
 | `backend_test <gpu>` | A GPU backend against the float32 CPU build: the same best hypothesis per round, the same problems solved. |
 | `parity_test` | Each solver against PoseLib's on the same samples (built when PoseLib is fetched with `tools/fetch_reference.sh`). |
+| `package` | Installs the build into a fresh prefix and builds a C project against the package (`tests/package`); it registers a camera on every backend. |
 
 The GPU tests run on a machine with that GPU.

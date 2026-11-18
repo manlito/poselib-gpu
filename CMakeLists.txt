@@ -4,6 +4,12 @@ project(poselib_gpu VERSION 0.1.0 LANGUAGES CXX)
 option(JPO_BUILD_CLI "Build the jpo command line tool" ON)
 option(JPO_BUILD_TESTS "Build tests" ON)
 option(JPO_BUILD_WASM "Emscripten: build the WebAssembly module, JS wrapper and test page (web/)" ON)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+  set(jpo_top_level ON)
+else()
+  set(jpo_top_level OFF)
+endif()
+option(JPO_INSTALL "Install rules: the library, its header, the command line tool and the CMake package" ${jpo_top_level})
 set(JPO_CUDA "AUTO" CACHE STRING "CUDA backend: AUTO (build it when a CUDA compiler is found), ON or OFF")
 set_property(CACHE JPO_CUDA PROPERTY STRINGS AUTO ON OFF)
 set(JPO_METAL "AUTO" CACHE STRING "Metal backend (Apple platforms): AUTO, ON or OFF")
@@ -82,16 +88,27 @@ if(NOT JPO_WEBGPU STREQUAL "OFF")
   endif()
 endif()
 
+include(GNUInstallDirs)
 add_library(jpo
   src/core/api.cpp
   src/core/auto_rule.cpp
   src/core/estimator.cpp
   src/core/geometry.cpp
   src/backend/cpu/cpu_backend.cpp)
-target_include_directories(jpo PUBLIC include PRIVATE src)
+add_library(jpo::jpo ALIAS jpo)
+target_include_directories(jpo PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                                      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+                               PRIVATE src)
+# The header has no export macros: a Windows DLL exports every symbol (the API is all jpo_ functions).
+set_target_properties(jpo PROPERTIES VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR}
+                                     WINDOWS_EXPORT_ALL_SYMBOLS ON)
 if(NOT EMSCRIPTEN)
   find_package(Threads REQUIRED)
   target_link_libraries(jpo PRIVATE Threads::Threads)
+endif()
+if(EMSCRIPTEN)
+  # Built with native wasm exceptions (above): the module that links jpo must use them too.
+  target_link_options(jpo INTERFACE -fwasm-exceptions)
 endif()
 if(NOT MSVC)
   # Fused multiply-add is left to the compiler (measured 15-25 % faster on Apple silicon). Backends
@@ -107,7 +124,11 @@ if(JPO_HAVE_CUDA)
   target_sources(jpo PRIVATE src/backend/cuda/cuda_backend.cu)
   set_property(SOURCE src/backend/cuda/cuda_backend.cu APPEND PROPERTY OBJECT_DEPENDS "${jpo_kernels}")
   target_compile_definitions(jpo PRIVATE JPO_HAVE_CUDA)
-  set_target_properties(jpo PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+  # The runtime is linked by name rather than left to CMake's CUDA language support, so that a project
+  # that finds the installed package links it without enabling CUDA itself.
+  find_package(CUDAToolkit REQUIRED)
+  set_target_properties(jpo PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON CUDA_RUNTIME_LIBRARY None)
+  target_link_libraries(jpo PRIVATE CUDA::cudart_static)
 endif()
 
 if(JPO_HAVE_METAL)
@@ -125,7 +146,8 @@ if(JPO_HAVE_METAL)
   target_sources(jpo PRIVATE src/backend/metal/metal_backend.mm "${metal_cpp}")
   target_compile_definitions(jpo PRIVATE JPO_HAVE_METAL)
   target_compile_options(jpo PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-  target_link_libraries(jpo PRIVATE "${JPO_METAL_FRAMEWORK}" "${JPO_FOUNDATION_FRAMEWORK}")
+  # By name, not by the SDK path find_library returned: the installed package must not carry that path.
+  target_link_libraries(jpo PRIVATE "-framework Metal" "-framework Foundation")
 endif()
 
 if(JPO_HAVE_WEBGPU)
@@ -141,8 +163,10 @@ if(JPO_HAVE_WEBGPU)
   target_compile_definitions(jpo PRIVATE JPO_HAVE_WEBGPU)
   if(EMSCRIPTEN)
     # PUBLIC: whatever links jpo into a module needs the port's JavaScript library too.
-    target_compile_options(jpo PUBLIC "--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py")
-    target_link_options(jpo PUBLIC "--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py")
+    # The installed package adds the same options in jpoConfig.cmake, from a directory the consumer can
+    # change (JPO_EMDAWNWEBGPU_DIR), instead of this machine's path.
+    target_compile_options(jpo PUBLIC "$<BUILD_INTERFACE:--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py>")
+    target_link_options(jpo PUBLIC "$<BUILD_INTERFACE:--use-port=${JPO_EMDAWNWEBGPU_DIR}/emdawnwebgpu.port.py>")
   else()
     target_link_libraries(jpo PUBLIC dawn::webgpu_dawn)
   endif()
@@ -157,6 +181,62 @@ foreach(b CUDA METAL WEBGPU)
 endforeach()
 string(REPLACE ";" ", " jpo_backends_text "${jpo_backends}")
 message(STATUS "jpo backends: ${jpo_backends_text}")
+
+# The CMake package: find_package(jpo [COMPONENTS cuda metal webgpu]) and target jpo::jpo, from an
+# install prefix or from this build tree. A component is a backend this build has.
+if(JPO_INSTALL)
+  include(CMakePackageConfigHelpers)
+  set(jpo_cmake_dir "${CMAKE_INSTALL_LIBDIR}/cmake/jpo")
+  install(TARGETS jpo EXPORT jpoTargets
+          ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES include/jpo/jpo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/jpo)
+  install(FILES LICENSE.PoseLib DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/jpo)
+  install(EXPORT jpoTargets NAMESPACE jpo:: DESTINATION "${jpo_cmake_dir}")
+  export(EXPORT jpoTargets NAMESPACE jpo:: FILE "${CMAKE_CURRENT_BINARY_DIR}/jpoTargets.cmake")
+
+  # What jpoConfig.cmake must find again for the consumer.
+  get_target_property(jpo_type jpo TYPE)
+  set(JPO_CONFIG_STATIC OFF)
+  if(jpo_type STREQUAL "STATIC_LIBRARY")
+    set(JPO_CONFIG_STATIC ON)
+  endif()
+  set(JPO_CONFIG_THREADS OFF)
+  if(jpo_type STREQUAL "STATIC_LIBRARY" AND NOT EMSCRIPTEN)
+    set(JPO_CONFIG_THREADS ON)
+  endif()
+  set(JPO_CONFIG_CUDA OFF)
+  if(JPO_HAVE_CUDA AND jpo_type STREQUAL "STATIC_LIBRARY")
+    set(JPO_CONFIG_CUDA ON)
+  endif()
+  set(JPO_CONFIG_DAWN OFF)
+  if(JPO_HAVE_WEBGPU AND NOT EMSCRIPTEN)
+    set(JPO_CONFIG_DAWN ON)
+    set(JPO_CONFIG_THREADS ON)  # Dawn's own package names Threads::Threads without finding it
+    set(JPO_CONFIG_DAWN_DIR "${Dawn_DIR}")
+  endif()
+  set(JPO_CONFIG_EMDAWNWEBGPU OFF)
+  if(JPO_HAVE_WEBGPU AND EMSCRIPTEN)
+    set(JPO_CONFIG_EMDAWNWEBGPU ON)
+  endif()
+  set(JPO_CONFIG_BACKENDS "${jpo_backends}")
+  foreach(location install build)
+    if(location STREQUAL "install")
+      set(out "${CMAKE_CURRENT_BINARY_DIR}/package/jpoConfig.cmake")
+      set(dest "${jpo_cmake_dir}")
+    else()
+      set(out "${CMAKE_CURRENT_BINARY_DIR}/jpoConfig.cmake")
+      set(dest "${CMAKE_CURRENT_BINARY_DIR}")
+    endif()
+    configure_package_config_file(cmake/jpoConfig.cmake.in "${out}" INSTALL_DESTINATION "${dest}")
+  endforeach()
+  write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/jpoConfigVersion.cmake"
+                                   COMPATIBILITY SameMajorVersion)
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/package/jpoConfig.cmake"
+                "${CMAKE_CURRENT_BINARY_DIR}/jpoConfigVersion.cmake"
+          DESTINATION "${jpo_cmake_dir}")
+endif()
 
 # The WebAssembly module (jpo_wasm.js + .wasm) with web/jpo.js and the test page, side by side in
 # <build>/web, ready to serve. Single-threaded; waits for the GPU through JSPI.
@@ -190,6 +270,9 @@ if(JPO_BUILD_CLI AND NOT EMSCRIPTEN)
   set_target_properties(jpo_cli PROPERTIES OUTPUT_NAME jpo)
   target_include_directories(jpo_cli PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(jpo_cli PRIVATE jpo)
+  if(JPO_INSTALL)
+    install(TARGETS jpo_cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
 endif()
 
 # PoseLib: the reference tool and the parity tests. Test-only; the library does not use it.
@@ -231,6 +314,14 @@ if(JPO_BUILD_TESTS AND NOT EMSCRIPTEN)
     target_include_directories(parity_test PRIVATE src ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(parity_test PRIVATE jpo poselib_ref)
     add_test(NAME poselib_parity COMMAND parity_test)
+  endif()
+  # A project outside this tree finds the installed package and solves a problem through it.
+  if(JPO_INSTALL)
+    add_test(NAME package
+             COMMAND ${CMAKE_COMMAND} "-DJPO_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}" "-DJPO_CONFIG=$<CONFIG>"
+                     "-DJPO_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests/package"
+                     "-DJPO_GENERATOR=${CMAKE_GENERATOR}"
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/package/run.cmake")
   endif()
   # The incremental reconstruction test (needs just-ba; see tests/incremental/CMakeLists.txt).
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/incremental/CMakeLists.txt")
