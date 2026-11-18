@@ -5,8 +5,8 @@ Minimal-dependency robust pose estimation for bundle-adjustment pipelines: relat
 `../just-matching` and `../just-ba` (C++ core, no PyTorch or other framework at run time). A fast CPU
 library first; hand-written Metal / CUDA / WebGPU kernels only for the work where a GPU is measured faster.
 
-Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 is built and not yet published;
-M8 is not started.
+Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 is published at
+<https://poselib-gpu.pages.dev>; M8 is not started.
 Sections above "Results" are the plan as it was followed; where the implementation differs from the first
 plan, "What changed while building" says how and why.
 
@@ -322,7 +322,7 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     instead of 3.0, candidate rounds come within 8 % of WebGPU alone. Browser timings come from Chrome on
     one machine; Safari and Firefox were not run.
 
-- [ ] **M7 — Public docs and demo** (Cloudflare Pages)
+- [x] **M7 — Public docs and demo** (Cloudflare Pages)
   - Site: build, quick start, concepts (rounds, precision, conventions), C API, accuracy and speed, in the
     browser, references.
   - Live demo in the visitor's browser: a real image pair with its matches, inliers and epipolar lines drawn,
@@ -330,10 +330,11 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     against a small point cloud.
   - Benchmark page with fixed problem sets, numbers copied out as Markdown.
   - **Exit:** published; `sphinx-build -W` passes in the workflow.
-  - **Built, not published.** `docs/` (Sphinx + MyST, just-matching's theme) has the eight pages; `sphinx-build
-    -W` passes locally against a browser build, and the `site` job of the docs workflow (by hand) builds the
-    module and the site and deploys with `deploy=true`. Publishing waits for the Cloudflare secrets and for
-    the name (open question). The demo (`web/demo.html`) uses real data made once by `tools/demo_data.py`:
+  - **Done.** Published at <https://poselib-gpu.pages.dev>. `docs/` (Sphinx + MyST, just-matching's theme)
+    has the eight pages; the `site` job of the docs workflow builds the WebAssembly module and the site with
+    `sphinx-build -W` and deploys it to Cloudflare Pages on every push to main (or by hand with
+    `deploy=true`). The address is Cloudflare's own; a domain of its own waits for the name (open question).
+    The demo (`web/demo.html`) uses real data made once by `tools/demo_data.py`:
     ALIKED keypoints and FlexGlue matches on three KITTI pairs (a turn of 19°, a corner passed twice 22°
     apart, two look-alike streets with 40 wrong matches), and frame 103 registered against 611 points
     triangulated from frames 100 and 106 (it lands 0.51 of the way between them). Wrong matches, noise and
