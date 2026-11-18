@@ -106,6 +106,16 @@ tools/fetch_webgpu.sh          # Dawn (native WebGPU) and emdawnwebgpu (browser)
 The incremental reconstruction test is built when just-ba is found next to this repository
 (`-DJPO_JUST_BA_DIR=...`).
 
+From another CMake project, after `cmake --install build/release --prefix <prefix>`:
+
+```cmake
+find_package(jpo 0.1 REQUIRED)        # components: the backends, e.g. COMPONENTS cuda
+target_link_libraries(my_app PRIVATE jpo::jpo)
+```
+
+A project that links the static library needs C++ enabled even when its code is C. `add_subdirectory` gives
+the same `jpo::jpo` target.
+
 WebAssembly (Emscripten 7.0.0):
 
 ```sh
@@ -133,6 +143,7 @@ python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with Pose
 | `precision_test` | The float32 build of the kernels against the double build. |
 | `backend_test <gpu>` | A GPU backend against the float CPU build: the same best hypothesis per round, the same problems solved. |
 | `incremental_test` | An incremental reconstruction of three generated scenes with just-ba. |
+| `package` | Installs the build, builds a C project against `find_package(jpo)` and registers a camera on every backend. |
 | `web/test.html` | The generated sets in the browser, next to `jpo webcheck` natively. |
 | `web/bench.html` | `jpo bench` cells and candidate rounds in the browser, for the `auto` rule there (`tools/browser_bench.mjs` runs it in headless Chrome). |
 

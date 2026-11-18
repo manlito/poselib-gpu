@@ -89,6 +89,7 @@ running to `max_iterations`. See [How it works](concepts.md#candidate-images-in-
 
 ## Linking
 
-Link through CMake (`target_link_libraries(my_app PRIVATE jpo)`): the target carries what each backend needs,
-such as Metal.framework or the CUDA runtime, and Dawn for native WebGPU. Linking `libjpo.a` by hand means
-listing those as well.
+Link through CMake, from the installed package or the added folder
+(`target_link_libraries(my_app PRIVATE jpo::jpo)`, see [Build](install.md#using-it-from-another-cmake-project)):
+the target carries what each backend needs, such as Metal.framework or the CUDA runtime, and Dawn for native
+WebGPU. Linking `libjpo.a` by hand means listing those as well.
