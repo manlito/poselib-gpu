@@ -361,7 +361,8 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     project `tests/package` against it, registering a camera on every backend: passed on the M5 Pro
     (Metal, WebGPU; static and shared) and on the NVIDIA laptop (CUDA; static and shared). The same
     project built with Emscripten against the installed wasm package runs on the CPU under Node (no
-    WebGPU there). Windows runs it in CI, not yet run.
+    WebGPU there). Hosted CI runs it on Ubuntu, macOS and Windows (Visual Studio generator), CPU only:
+    passed on all three.
   - **Link test: blocked on the siblings.** Of the four libraries only just-keypoints and poselib-gpu
     take the caller's WebGPU device (`webgpu_instance` / `webgpu_device` in their configs);
     just-matching (`jmt_config.device` is an index) and just-ba (`backends/webgpu`, off by default) create
