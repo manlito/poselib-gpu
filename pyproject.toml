@@ -12,8 +12,9 @@ dynamic = ["version"]
 description = "Batched robust relative and absolute pose (PnP) for calibrated cameras, ported from PoseLib, with Metal and CUDA kernels"
 readme = "bindings/python/README.md"
 requires-python = ">=3.12"
-license = "BSD-3-Clause"
-license-files = ["LICENSE.PoseLib"]
+# This repository's code is Apache-2.0; the solvers ported from PoseLib stay BSD-3-Clause.
+license = "Apache-2.0 AND BSD-3-Clause"
+license-files = ["LICENSE", "LICENSE.PoseLib"]
 dependencies = ["numpy>=1.26"]
 keywords = ["relative pose", "PnP", "RANSAC", "structure from motion", "PoseLib", "GPU"]
 classifiers = [

@@ -523,7 +523,6 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 ## Open questions
 
 - Name and prefix (`jpo` is a placeholder).
-- Licence of this repository (PoseLib's BSD-3-Clause applies to the ported parts either way).
 - Whether Sampson error on normalized coordinates is enough for fisheye pairs, or relative pose should be
   scored on bearings (angular error), as just-ba does for triangulation. Measured: it costs inliers.
 - Whether "line relative pose estimation" in the request meant line features (left out, see above).

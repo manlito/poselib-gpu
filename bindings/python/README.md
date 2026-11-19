@@ -61,3 +61,6 @@ measurement.
 
 Documentation, the C API and measurements: <https://poselib-gpu.pages.dev> and
 <https://github.com/manlito/poselib-gpu>.
+
+Licence: Apache-2.0. The solvers are ported from PoseLib (BSD-3-Clause, Copyright (c) 2020 Viktor Larsson); its
+notice is in the package.

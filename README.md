@@ -199,5 +199,5 @@ the GPU.
 
 ## Licence
 
-The solvers are ported from PoseLib (BSD-3-Clause, Copyright (c) 2020 Viktor Larsson); the notice is in
+Apache-2.0 ([LICENSE](LICENSE)), as just-ba. The solvers are ported from PoseLib (BSD-3-Clause, Copyright (c) 2020 Viktor Larsson); the notice is in
 [LICENSE.PoseLib](LICENSE.PoseLib) and at the top of the ported files.
