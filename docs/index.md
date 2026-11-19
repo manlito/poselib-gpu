@@ -47,6 +47,7 @@ is optional.
 
 install
 quickstart
+python
 concepts
 browser
 accuracy-and-speed

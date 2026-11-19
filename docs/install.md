@@ -1,5 +1,8 @@
 # Build
 
+For Python, `pip install poselib-gpu` (or `poselib-gpu-cu12`, `poselib-gpu-cu13`) installs a built wheel: see
+[Python](python.md). The rest of this page builds the library from source.
+
 poselib-gpu is built from source with CMake 3.16 or later and a C++17 compiler. The CPU backend needs nothing
 else. Each GPU backend is built when its toolkit is found, and uses no library beyond it.
 
