@@ -4,9 +4,20 @@
 // of one small result per problem (every round).
 #include <cuda_runtime.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -121,9 +132,22 @@ struct DeviceBuffer {
 const uint32_t kMaxItemsPerLaunch = 1024;
 const uint32_t kBlock = 64;
 
+// Whether NVIDIA's driver is installed. On Windows the static CUDA 13 runtime crashes in its first call
+// when nvcuda.dll is missing (a hosted runner with CUDA 13.4: an access violation in cudaGetDeviceCount,
+// where CUDA 12.9 returns an error), so the driver is looked for first. Elsewhere the runtime reports it.
+bool driver_present() {
+#ifdef _WIN32
+  HMODULE h = LoadLibraryExW(L"nvcuda.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+  if (!h) return false;
+  FreeLibrary(h);
+#endif
+  return true;
+}
+
 class CudaBackend final : public Backend {
  public:
   CudaBackend(uint32_t seed, uint32_t round) : seed_(seed), round_(round) {
+    if (!driver_present()) throw std::runtime_error("CUDA: no NVIDIA driver (nvcuda.dll not found)");
     int count = 0;
     check(cudaGetDeviceCount(&count), "device count");
     if (count < 1) throw std::runtime_error("CUDA: no device");
