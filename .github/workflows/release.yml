@@ -20,7 +20,7 @@ name: release
 
 on:
   push:
-    branches: [main, wt/pypi-release]  # TEMPORARY: the branch, to test the build (never publishes)
+    branches: [main]
     paths-ignore: ["**.md", "docs/**", "web/**", ".github/workflows/docs.yml", ".github/workflows/ci.yml"]
   workflow_dispatch:
     inputs:
