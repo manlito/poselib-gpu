@@ -123,6 +123,52 @@ emcmake cmake -S . -B build/wasm -G Ninja
 cmake --build build/wasm          # build/wasm/web: jpo_wasm.js, jpo_wasm.wasm, jpo.js, test.html, bench.html, demo.html, benchmark.html
 ```
 
+## Python
+
+The module `poselib_gpu` (nanobind, [bindings/python](bindings/python/README.md)) wraps the C API over lists
+of NumPy arrays:
+
+```python
+import poselib_gpu as pg
+
+ctx = pg.Context()                                       # backend "auto"
+cam = pg.Camera("PINHOLE", [fx, fy, cx, cy])
+r = ctx.relative_pose([xy_a], [xy_b], cam)               # r.pose, r.n_inliers, r.inliers, r.status, ...
+r = ctx.absolute_pose([xy], [xyz], cam, min_inlier_ratio=0.25)
+```
+
+From PyPI: `pip install poselib-gpu` (CPU, and Metal on macOS; Linux x86_64, macOS arm64, Windows x86_64),
+`poselib-gpu-cu12` or `poselib-gpu-cu13` (CPU and CUDA; Linux and Windows x86_64; the CUDA runtime linked
+statically, so only the driver is needed). From this checkout:
+
+```sh
+pip install .                                            # the package, through pyproject.toml
+# or a CMake build with the module and its tests (needs nanobind==3.1.0 and pytest for that Python):
+cmake -S . -B build/py -G Ninja -DJPO_BUILD_PYTHON=ON -DPython_EXECUTABLE=<python>
+cmake --build build/py && ctest --test-dir build/py -R python
+```
+
+## Releases
+
+`.github/workflows/release.yml` runs on every push to `main`, a merge included (not on changes to Markdown,
+`docs/` or `web/` only). It builds and tests seven wheels (the three packages on their platforms) and the sdist
+on hosted runners, publishes them to PyPI through trusted publishing, and tags the commit `vX.Y.Z`.
+`gh workflow run release` builds and tests without publishing; `-f publish=true` publishes too.
+
+The version is chosen by the workflow (`packaging/version.py next`): the highest of the `vX.Y.Z` tags and the
+three packages' versions on PyPI, with its patch bumped, or `project(VERSION)` in CMakeLists.txt when that is
+higher, which is how a minor or major release is made (raise it in the pull request that warrants it). With
+nothing released, `project(VERSION)` itself (0.1.0). `packaging/version.py set` writes the version into the
+checkout before each build; it is never committed. No GPU runs in CI: before merging a GPU change, run the GPU
+tests by hand.
+
+First release of each package: PyPI accepts one pending trusted publisher per repository and workflow, so the
+packages are created one at a time. Before the first merge, add a pending publisher for `poselib-gpu` (owner
+`manlito`, repository `poselib-gpu`, workflow `release.yml`, no environment). The release uploads
+`poselib-gpu` and fails at `poselib-gpu-cu12`; add that package's pending publisher, re-run the failed publish
+job (`gh run rerun <run> --failed`; files already up are skipped), then do the same for `poselib-gpu-cu13`.
+After that all three are ordinary trusted publishers and each release publishes them in one run.
+
 ## Command line
 
 ```sh
@@ -147,10 +193,11 @@ python3 tools/bench.py --backends cpu,metal,auto     # the timing grid with Pose
 | `web/test.html` | The generated sets in the browser, next to `jpo webcheck` natively. |
 | `web/bench.html` | `jpo bench` cells and candidate rounds in the browser, for the `auto` rule there (`tools/browser_bench.mjs` runs it in headless Chrome). |
 
-Hosted CI runs the CPU tests and the WebAssembly build. GPU tests are run by hand on the machine that has
+Hosted CI runs the CPU tests and the WebAssembly build; the release workflow runs the Python tests against
+every wheel. GPU tests are run by hand on the machine that has
 the GPU.
 
 ## Licence
 
-The solvers are ported from PoseLib (BSD-3-Clause, Copyright (c) 2020 Viktor Larsson); the notice is in
+Apache-2.0 ([LICENSE](LICENSE)), as just-ba. The solvers are ported from PoseLib (BSD-3-Clause, Copyright (c) 2020 Viktor Larsson); the notice is in
 [LICENSE.PoseLib](LICENSE.PoseLib) and at the top of the ported files.

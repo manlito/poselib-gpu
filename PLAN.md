@@ -6,7 +6,7 @@ Minimal-dependency robust pose estimation for bundle-adjustment pipelines: relat
 library first; hand-written Metal / CUDA / WebGPU kernels only for the work where a GPU is measured faster.
 
 Status: M0 to M6 are built and measured (see "Milestones" and "Results"). M7 is published at
-<https://poselib-gpu.pages.dev>; M8 is under way (the CMake package is done).
+<https://poselib-gpu.pages.dev>; M8 is under way (the CMake package and the Python package are done).
 Sections above "Results" are the plan as it was followed; where the implementation differs from the first
 plan, "What changed while building" says how and why.
 
@@ -344,7 +344,7 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     as Markdown with the browser and GPU. Checked in the app's Chromium only.
 
 - [ ] **M8 — v1.0**
-  - CMake package (`find_package`), npm package, optional Python binding as just-ba's, tagged release with
+  - CMake package (`find_package`), npm package, Python package as just-ba's (built, below), tagged release with
     the benchmark numbers.
   - A link test: one WebAssembly module and one native binary holding just-keypoints, just-matching,
     poselib-gpu and just-ba on one GPU device.
@@ -363,6 +363,16 @@ Each milestone is a state that can be run and checked. Numbers are filled in whe
     project built with Emscripten against the installed wasm package runs on the CPU under Node (no
     WebGPU there). Hosted CI runs it on Ubuntu, macOS and Windows (Visual Studio generator), CPU only:
     passed on all three.
+  - **Python package: built.** `bindings/python` (nanobind, stable ABI from Python 3.12, as just-ba's):
+    `poselib_gpu.Context`, `Camera`, `relative_pose` and `absolute_pose` over lists of NumPy arrays, packed
+    into the C API's batches; results as arrays, inlier masks per problem. Three packages, as just-ba's:
+    `poselib-gpu` (CPU, Metal on macOS; Linux x86_64, macOS arm64, Windows x86_64), `poselib-gpu-cu12` and
+    `poselib-gpu-cu13` (CPU and CUDA; Linux and Windows x86_64). The CUDA runtime is static, so the CUDA
+    packages depend on no NVIDIA pip package; WebGPU is left out of the wheels. `release.yml` builds and
+    tests the seven wheels and the sdist on every push to main, publishes them and tags `vX.Y.Z`, the
+    version chosen by `packaging/version.py` (README.md, "Releases"). The cu13 wheel passed its tests with
+    CUDA on the RTX 2070 laptop, and the CPU/Metal module on the M5 Pro. The `auto` rule in a wheel is the
+    one measured on those two machines.
   - **Link test: blocked on the siblings.** Of the four libraries only just-keypoints and poselib-gpu
     take the caller's WebGPU device (`webgpu_instance` / `webgpu_device` in their configs);
     just-matching (`jmt_config.device` is an index) and just-ba (`backends/webgpu`, off by default) create
@@ -513,7 +523,6 @@ to `max_iterations` (10,000) and made up nearly all the time of a round.
 ## Open questions
 
 - Name and prefix (`jpo` is a placeholder).
-- Licence of this repository (PoseLib's BSD-3-Clause applies to the ported parts either way).
 - Whether Sampson error on normalized coordinates is enough for fisheye pairs, or relative pose should be
   scored on bearings (angular error), as just-ba does for triangulation. Measured: it costs inliers.
 - Whether "line relative pose estimation" in the request meant line features (left out, see above).

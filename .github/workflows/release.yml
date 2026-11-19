@@ -1,0 +1,176 @@
+# Release to PyPI, as just-ba's release workflow. Runs on every push to main, a merge included, and
+# publishes; by hand it builds and tests, and publishes only if asked:
+#
+#   gh workflow run release                  # build and test every wheel, publish nothing
+#   gh workflow run release -f publish=true  # the same, then publish to PyPI
+#
+# The version is chosen here (packaging/version.py): the latest release, tag or PyPI, with its patch bumped,
+# or project(VERSION) in CMakeLists.txt when that is higher (a minor or major release is an edit there). It is
+# written into the checkout before each build, and the tag vX.Y.Z is pushed once every package is up.
+# Pushes that change only Markdown, the site (docs/) or the browser pages (web/) release nothing.
+#
+# Free hosted runners only. Three packages, all providing the module poselib_gpu: poselib-gpu (CPU, and
+# Metal on macOS) for Linux x86_64, macOS arm64 and Windows x86_64, with the sdist; poselib-gpu-cu12 and
+# poselib-gpu-cu13 for Linux x86_64 and Windows x86_64, built with nvcc and the CUDA runtime from NVIDIA's
+# redistributable archives (packaging/fetch_cuda.py). The runtime is linked statically, so the CUDA wheels
+# need only the driver. No GPU here: the tests of the CUDA and Metal backends skip without a device.
+# Publishing uses PyPI trusted publishing for this file, with no GitHub environment and no token. The first
+# release of each package goes up one at a time (README.md, "Releases").
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "web/**", ".github/workflows/docs.yml", ".github/workflows/ci.yml"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI after building and testing"
+        type: boolean
+        default: false
+
+# One release at a time, never cancelled: a push during a release waits, and only the newest waiting push
+# is released next.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: choose the version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the tags
+      - id: next
+        run: |
+          v=$(python3 packaging/version.py next poselib-gpu poselib-gpu-cu12 poselib-gpu-cu13)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "::notice::version $v"
+
+  sdist:
+    name: sdist
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python packaging/version.py set ${{ needs.version.outputs.version }}
+      - run: python -m pip install build && python -m build --sdist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    name: ${{ matrix.variant }} wheel (${{ matrix.os }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, variant: cpu }
+          - { os: macos-15, variant: cpu }
+          - { os: windows-2025, variant: cpu }
+          # CUDA 12 keeps the GPU generations CUDA 13 dropped; 13.4 is the laptop's.
+          - { os: ubuntu-24.04, variant: cu12, cuda: "12.9.1" }
+          - { os: ubuntu-24.04, variant: cu13, cuda: "13.4.3" }
+          # CUDA 12.9's nvcc accepts Visual Studio 2017 to 2022 only; the runner has Visual Studio 2026 with
+          # the 2022 compiler (MSVC 14.44) as a component.
+          - { os: windows-2025, variant: cu12, cuda: "12.9.1", msvc: "14.44" }
+          - { os: windows-2025, variant: cu13, cuda: "13.4.3" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python packaging/version.py set ${{ needs.version.outputs.version }}
+
+      # Linux CUDA: the toolkit is fetched inside the manylinux container.
+      - name: CUDA package settings (Linux)
+        if: matrix.variant != 'cpu' && runner.os == 'Linux'
+        run: |
+          python packaging/variant.py ${{ matrix.variant }} --root /opt/jpo-cuda --platform linux
+          echo "CIBW_BEFORE_ALL_LINUX=/opt/python/cp312-cp312/bin/python {package}/packaging/fetch_cuda.py --cuda ${{ matrix.cuda }} --dest /opt/jpo-cuda" >> "$GITHUB_ENV"
+
+      # Windows CUDA: fetched on the runner; nvcc needs MSVC's environment and Ninja (no CUDA integration in
+      # Visual Studio without NVIDIA's installer).
+      - name: CUDA package settings (Windows)
+        if: matrix.variant != 'cpu' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python packaging/variant.py ${{ matrix.variant }} --root C:/jpo-cuda --platform windows
+          python packaging/fetch_cuda.py --cuda ${{ matrix.cuda }} --dest C:/jpo-cuda
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: matrix.variant != 'cpu' && runner.os == 'Windows'
+        with:
+          arch: x64
+          toolset: ${{ matrix.msvc }}
+
+      - uses: pypa/cibuildwheel@v4.3.5
+        with:
+          output-dir: wheelhouse
+      - name: Wheel size
+        shell: bash
+        run: ls -l wheelhouse
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.variant }}-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  publish:
+    name: publish to PyPI
+    # A push publishes from main only (a branch added to the trigger to test the build never publishes); by
+    # hand, publish=true.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.publish
+    needs: [version, sdist, wheels]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write  # trusted publishing
+      contents: write  # the release tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: One folder per package
+        run: |
+          mkdir -p pkg/poselib-gpu pkg/poselib-gpu-cu12 pkg/poselib-gpu-cu13
+          mv dist/poselib_gpu_cu12-* pkg/poselib-gpu-cu12/
+          mv dist/poselib_gpu_cu13-* pkg/poselib-gpu-cu13/
+          mv dist/poselib_gpu-* pkg/poselib-gpu/
+          ls -lR pkg
+      # skip-existing: a re-run uploads only what is not on PyPI yet, so the packages can go up one at a time
+      # while each first upload creates its project (PyPI takes one pending publisher per workflow). A new run
+      # never meets an existing version: version.py reads PyPI.
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          packages-dir: pkg/poselib-gpu/
+          skip-existing: true
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          packages-dir: pkg/poselib-gpu-cu12/
+          skip-existing: true
+      - uses: pypa/gh-action-pypi-publish@v1.14.3
+        with:
+          packages-dir: pkg/poselib-gpu-cu13/
+          skip-existing: true
+      # Once every package is up. A re-run finds the tag there already.
+      - name: Tag the release
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "v$VERSION" || git ls-remote --exit-code --tags origin "v$VERSION"

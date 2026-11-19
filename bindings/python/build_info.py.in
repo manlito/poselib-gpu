@@ -1,0 +1,6 @@
+# Written by CMake (bindings/python/build_info.py.in); do not edit.
+__version__ = "@PROJECT_VERSION@"
+# "cpu" (poselib-gpu), "cu12" or "cu13" (poselib-gpu-cu12, poselib-gpu-cu13), "source" (a CMake build).
+VARIANT = "@JPO_PACKAGE_VARIANT@"
+# The CUDA toolkit the CUDA backend was built with, or "" without one.
+CUDA_VERSION = "@JPO_CUDA_VERSION@"
