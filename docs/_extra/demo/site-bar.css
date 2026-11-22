@@ -18,3 +18,5 @@ a.jk-brand:hover { text-decoration: none; }
 .jk-grow { flex: 1 1 60px; }
 a.jk-toplink, a.jk-toplink:visited { font-size: 14px; color: var(--muted); }
 a.jk-toplink[aria-current="page"] { color: var(--fg); }
+a.jk-gh, a.jk-gh:visited { display: inline-flex; align-items: center; color: var(--muted); }
+.jk-top a.jk-gh:hover { text-decoration: none; color: var(--fg); }
